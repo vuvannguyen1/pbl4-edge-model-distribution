@@ -12,6 +12,7 @@ Dùng `http.server.ThreadingHTTPServer` của thư viện chuẩn, chạy trong 
 from __future__ import annotations
 
 import re
+import socket
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -22,6 +23,16 @@ from typing import Any
 from client.downloader import verified_variants
 
 _ROUTE = re.compile(r"^/chunks/([a-z0-9_]{1,64})/(\d+)$")
+
+
+def port_available(port: int, host: str = "0.0.0.0") -> bool:
+    """True nếu mở được cổng `port` để lắng nghe (không có chương trình khác chiếm)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            sock.bind((host, port))
+        except OSError:
+            return False
+    return True
 
 
 @dataclass(frozen=True)
