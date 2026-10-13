@@ -248,7 +248,10 @@ class DistributionService:
         log += [f"Loại {r.variant_id}: {r.reason}" for r in rejections]
         if not candidates:
             message = no_fit_message(context, rejections)
-            logger.warning("NO_VARIANT_FITS cho %s: %s", context.device_id, message)
+            rid = self.state.reserve_request_id()
+            for line in log:
+                logger.info("[%s] %s", rid, line)
+            logger.warning("[%s] NO_VARIANT_FITS cho %s: %s", rid, context.device_id, message)
             raise ProtocolError("NO_VARIANT_FITS", message)
         try:
             result = self.selector.select(context, candidates)
@@ -346,8 +349,8 @@ class DistributionService:
                 item is not None
                 and item.source == "peer"
                 and url_origin(bad.source_url) == url_origin(item.url)
+                and self.state.ban_origin(url_origin(item.url))
             ):
-                self.state.ban_origin(url_origin(item.url))
                 logger.warning(
                     "[%s] Ngừng giao peer %s cho các plan sau", rid, url_origin(item.url)
                 )

@@ -49,6 +49,11 @@ class StateStore:
 
     # ------------------------------------------------------------ request
 
+    def reserve_request_id(self) -> str:
+        """Cấp request_id cho lượt xin bị từ chối, chỉ để ghi log (không lưu request)."""
+        with self._lock:
+            return f"r-{next(self._counter):04d}"
+
     def create_request(
         self,
         *,
@@ -109,9 +114,13 @@ class StateStore:
         with self._lock:
             return sorted(d for d, v in self._complete if v == variant_id)
 
-    def ban_origin(self, origin: str) -> None:
+    def ban_origin(self, origin: str) -> bool:
+        """Đánh dấu peer gửi sai. Trả True nếu đây là lần đầu bị đánh dấu."""
         with self._lock:
+            if origin in self._bad_origins:
+                return False
             self._bad_origins.add(origin)
+            return True
 
     def unban_origin(self, origin: str) -> None:
         with self._lock:
