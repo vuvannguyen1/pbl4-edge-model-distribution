@@ -220,3 +220,12 @@ __marimo__/
 .streamlit/secrets.toml
 
 models/**/*.onnx
+
+# PBL4: du lieu sinh luc chay (log, feedback, cache client) va file tai do dang
+data/
+*.part
+*.onnx
+# Anh demo tai bang tools/download_assets.py (giay phep thuoc tac gia goc, khong dua vao repo)
+samples/*.jpg
+samples/*.jpeg
+samples/*.png

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pbl4-edge-model-distribution"
+version = "1.0.0"
+description = "Phân phối model ONNX theo băng thông cho thiết bị edge (PBL4, Version 1)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "requests",
+    "onnxruntime",
+    "numpy",
+    "pillow",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "jsonschema",
+    "httpx",
+]
+
+[tool.setuptools]
+packages = ["server", "client"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
