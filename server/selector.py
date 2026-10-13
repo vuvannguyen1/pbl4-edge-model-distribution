@@ -31,9 +31,9 @@ BYTES_PER_MB = 1024 * 1024
 
 
 def fmt_num(value: float, digits: int = 1) -> str:
-    """60.0 -> "60", 41.27 -> "41.3": số gọn cho câu lý do."""
-    rounded = round(float(value), digits)
-    return str(int(rounded)) if rounded == int(rounded) else f"{rounded:.{digits}f}"
+    """60.0 -> "60", 41.27 -> "41.3", fmt_num(18.5, 2) -> "18.5": số gọn cho câu lý do."""
+    text = f"{round(float(value), digits):.{digits}f}"
+    return text.rstrip("0").rstrip(".") if "." in text else text
 
 
 def download_seconds(size_bytes: int, bandwidth_kbps: float) -> float:

@@ -35,7 +35,7 @@ def decide(
 ) -> FeedbackDecision:
     """Mặc định keep. Nếu latency vượt ngưỡng và có variant ready nhỏ hơn cùng task,
     chuyển sang variant nhỏ hơn có top-1 cao nhất (bằng nhau thì file nhỏ hơn)."""
-    latency = fmt_num(latency_ms_median)
+    latency = fmt_num(latency_ms_median, 2)
     slo = fmt_num(latency_slo_ms)
     if latency_ms_median <= latency_slo_ms:
         return FeedbackDecision(
