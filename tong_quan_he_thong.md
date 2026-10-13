@@ -294,6 +294,47 @@ Download Planner: chọn chunk/peer/server
 
 Đầu vào nên là một tập ứng viên động, mỗi ứng viên đại diện cho một `variant_id`; các đặc trưng của ứng viên được nối với ngữ cảnh thiết bị/yêu cầu.
 
+Ở mức hợp đồng dữ liệu, Model Selector nhận **một JSON request** và **một JSON đánh giá**. JSON request mô tả nhu cầu phân phối và điều kiện của client; JSON đánh giá chứa danh sách artifact ứng viên cùng metadata/benchmark đã được Registry và Candidate Filter kiểm tra.
+
+Ví dụ định dạng đầu vào:
+
+```json
+{
+  "request": {
+    "request_id": "r-0002",
+    "device_id": "phoneB",
+    "task_id": "image_classification",
+    "platform": "android",
+    "cpu_arch": "aarch64",
+    "ram_mb": 6144,
+    "runtime": "onnxruntime",
+    "bandwidth_kbps": 2000,
+    "deadline_s": 60,
+    "free_storage_mb": 2048,
+    "preferred_variant": null
+  },
+  "evaluation": {
+    "candidates": [
+      {
+        "variant_id": "mobilenetv2_int8_v1",
+        "file": "CV/MobileNetV2_INT8.onnx",
+        "status": "ready",
+        "size_bytes": 3655033,
+        "precision": "int8",
+        "contract_compatible": true,
+        "estimated_download_s": 14.6,
+        "benchmark_latency_ms_median": 18.5,
+        "benchmark_peak_ram_mb": 140.2,
+        "runtime_compatible": true,
+        "storage_available": true
+      }
+    ]
+  }
+}
+```
+
+`request` phải là dữ liệu từ client/server đã được validate; `evaluation.candidates` chỉ được chứa artifact đã qua hard filter hoặc phải có trường kết quả filter rõ ràng. Không đưa toàn bộ byte trọng số ONNX vào JSON đầu vào.
+
 **Đặc trưng ngữ cảnh** có thể gồm:
 
 - task/client yêu cầu;
@@ -320,15 +361,31 @@ Không phải tất cả trường đều bắt buộc có ngay ngày đầu. Re
 
 ### 7.3. Đầu ra
 
-Model Selector nên trả về tối thiểu:
+Model Selector phải trả về một JSON gồm **tên file model được phân phối** và **lý do lựa chọn**:
 
-- `variant_id` được chọn;
+```json
+{
+  "model_file": "MobileNetV2_INT8.onnx",
+  "reason": "Phù hợp với task image_classification và runtime onnxruntime; đáp ứng dung lượng, deadline 60 giây và có latency/RAM thấp nhất trong các ứng viên hợp lệ."
+}
+```
+
+Trong đó `model_file` là tên file artifact được phân phối, không phải đường dẫn tuyệt đối hoặc đường dẫn lưu trữ nội bộ trên server. Server dùng tên file này cùng Registry để ánh xạ tới `variant_id`. `reason` phải đọc được và phản ánh các ràng buộc hoặc số liệu đã dùng, không được là lý do chung chung như `best model`.
+
+Ở lớp nội bộ, có thể mở rộng response bằng `variant_id`, score, danh sách ứng viên bị loại, ước tính thời gian tải và phiên bản selector. Các trường mở rộng không thay thế hai trường bắt buộc trên.
+
+Khi không có artifact phù hợp, Selector không trả một file tùy ý mà trả lỗi nội bộ có mã `NO_VARIANT_FITS`; Server ánh xạ lỗi này sang error envelope của Protocol 1.0.
+
+Giao thức 1.0 hiện có trường `reason`, `variant`, `estimated_download_s` và `plan`. Vì vậy Server dùng `model_file` từ output của Selector để tìm `variant_id`/metadata tương ứng trong Registry, sau đó xây dựng response Protocol 1.0; không đưa đường dẫn lưu trữ nội bộ vào response client.
+
+Model Selector cũng nên lưu thêm bản ghi quyết định nội bộ khi cần audit:
+
+- `variant_id` được ánh xạ từ `model_file`;
 - điểm/ranking nội bộ và các ứng viên bị loại;
-- lý do có thể giải thích được;
 - ước tính thời gian tải/sử dụng nếu có dữ liệu;
 - phiên bản của chính sách hoặc Model Selector đã ra quyết định.
 
-Giao thức 1.0 hiện có trường `reason`, `variant`, `estimated_download_s` và `plan`. Các trường phục vụ vận hành nội bộ không nhất thiết phải công khai cho client nếu chưa có trong schema.
+Các trường phục vụ vận hành nội bộ không nhất thiết phải công khai cho client nếu chưa có trong schema.
 
 ### 7.4. Huấn luyện bộ chọn từ feedback
 
