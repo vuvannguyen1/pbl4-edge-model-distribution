@@ -1,0 +1,70 @@
+{
+  "schema_version": "1.0",
+  "model_id": "mobilenetv2",
+  "variant_id": "mobilenetv2_fp32",
+  "version": "1",
+  "artifact": {
+    "file": "CV/MobileNetV2_FP32.onnx",
+    "format": "onnx"
+  },
+  "task": {
+    "id": "image_classification",
+    "labels": "imagenet_1k"
+  },
+  "model": {
+    "family": "MobileNetV2",
+    "precision": "fp32",
+    "compression_level": 0
+  },
+  "contract": {
+    "input_shape": [
+      1,
+      3,
+      224,
+      224
+    ],
+    "input_dtype": "float",
+    "preprocessing": {
+      "color": "RGB",
+      "resize_shorter_side": 256,
+      "center_crop": [
+        224,
+        224
+      ],
+      "scale": "1/255",
+      "normalize": {
+        "mean": [
+          0.485,
+          0.456,
+          0.406
+        ],
+        "std": [
+          0.229,
+          0.224,
+          0.225
+        ]
+      },
+      "layout": "NCHW"
+    },
+    "output_contract": "imagenet_logits"
+  },
+  "quality": {
+    "top1_accuracy": 0.6948,
+    "top5_accuracy": 0.8926,
+    "evaluation_dataset": "ImageNet ILSVRC2012 validation, center crop",
+    "source": "Bảng công bố của ONNX Model Zoo (chưa tự đo lại)"
+  },
+  "requirements": {
+    "supported_runtimes": [
+      "onnxruntime"
+    ],
+    "minimum_ram_mb": null
+  },
+  "provenance": {
+    "source": "ONNX Model Zoo (onnxmodelzoo/legacy_models)",
+    "source_path": "mobilenet/model/mobilenetv2-12.onnx"
+  },
+  "lifecycle": {
+    "status": "draft"
+  }
+}
