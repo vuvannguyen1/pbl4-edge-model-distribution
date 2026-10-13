@@ -7,7 +7,7 @@ description: Xây dựng REST Server Protocol 1.0 cho đăng ký client, chọn 
 
 ## Mục tiêu
 
-Triển khai Server ASP.NET Core HTTP/1.1, mặc định port `8000`, giữ đúng hợp đồng Protocol 1.0 và phục vụ artifact theo chunk mà không nạp toàn bộ model vào RAM cho mỗi request.
+Triển khai Server Python FastAPI (HTTP/1.1), mặc định port `8000`, giữ đúng hợp đồng Protocol 1.0 và phục vụ artifact theo chunk mà không nạp toàn bộ model vào RAM cho mỗi request.
 
 ## Endpoint bắt buộc
 
