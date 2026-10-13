@@ -149,3 +149,71 @@ def client(app_factory: Callable[..., Any]) -> Iterator[Any]:
 
     with TestClient(app_factory()) as test_client:
         yield test_client
+
+
+# ---------------------------------------------------------------- server thật trong thread
+
+
+class LiveServer:
+    def __init__(self, app: Any) -> None:
+        import socket
+        import threading
+
+        import uvicorn
+
+        self.app = app
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._sock.bind(("127.0.0.1", 0))
+        self.port = self._sock.getsockname()[1]
+        self.url = f"http://127.0.0.1:{self.port}"
+        config = uvicorn.Config(app, log_level="warning", lifespan="off")
+        self.server = uvicorn.Server(config)
+        self.thread = threading.Thread(
+            target=self.server.run, kwargs={"sockets": [self._sock]}, daemon=True
+        )
+
+    def start(self) -> LiveServer:
+        import time
+
+        self.thread.start()
+        deadline = time.monotonic() + 15
+        while not self.server.started:
+            if time.monotonic() > deadline or not self.thread.is_alive():
+                raise RuntimeError("uvicorn không khởi động được")
+            time.sleep(0.02)
+        return self
+
+    def stop(self) -> None:
+        self.server.should_exit = True
+        self.thread.join(timeout=10)
+        self._sock.close()
+
+
+@pytest.fixture
+def live_server(app_factory: Callable[..., Any]) -> Iterator[Callable[..., LiveServer]]:
+    """Chạy uvicorn trong thread trên cổng ngẫu nhiên. Gọi live_server(**settings)."""
+    servers: list[LiveServer] = []
+
+    def start(**overrides: Any) -> LiveServer:
+        server = LiveServer(app_factory(**overrides)).start()
+        servers.append(server)
+        return server
+
+    yield start
+    for server in servers:
+        server.stop()
+
+
+def make_test_image(path: Path, size: tuple[int, int] = (320, 240)) -> Path:
+    """Ảnh màu tự sinh bằng Pillow (không phụ thuộc mạng)."""
+    from PIL import Image
+
+    width, height = size
+    img = Image.new("RGB", size)
+    pixels = img.load()
+    for x in range(width):
+        for y in range(height):
+            pixels[x, y] = ((x * 255) // width, (y * 255) // height, 128)
+    img.save(path, format="JPEG")
+    return path
