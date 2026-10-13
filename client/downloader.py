@@ -1,0 +1,316 @@
+"""Tải model theo plan: tối đa 4 miếng song song, kiểm SHA-256, fallback, ghi theo offset.
+
+Quy tắc (mục 8 của protocol):
+- Mỗi miếng tải theo `url` (chờ tối đa 10 s không nhận được byte nào), tự tính
+  SHA-256 và so với `plan[].sha256`; khớp mới ghi vào file `.part` tại `offset`.
+- Sai hash hoặc lỗi mạng: ghi vào `bad_chunks` (index, source_url), thử lại từ
+  `fallback_url` nếu có; tối đa 3 lần mỗi miếng.
+- Báo `/api/have` mỗi 4 miếng; `bandwidth_kbps` chỉ tính miếng lấy từ server.
+- Đủ miếng: kiểm SHA-256 toàn file; khớp mới đổi tên `.part` thành tên thật và
+  báo `complete: true`.
+- Miếng đã có sẵn đúng hash trong `.part` hoặc file cũ được dùng lại (tải tiếp).
+"""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import threading
+import time
+from collections.abc import Callable, Sequence
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import requests
+
+from client.api import ApiClient, build_have, new_session
+
+MAX_PARALLEL = 4
+CHUNK_TIMEOUT_S = 10.0
+MAX_ATTEMPTS = 3
+REPORT_EVERY = 4
+READ_BLOCK = 64 * 1024
+BYTES_PER_MB = 1024 * 1024
+
+Logger = Callable[[str], None]
+
+
+class DownloadError(Exception):
+    """Không tải đủ miếng hoặc hash toàn file sai."""
+
+
+class SwitchRequested(Exception):
+    """Server trả `switch` trong /api/have."""
+
+    def __init__(self, new_variant_id: str, reason: str | None) -> None:
+        super().__init__(f"server yêu cầu đổi sang {new_variant_id}")
+        self.new_variant_id = new_variant_id
+        self.reason = reason
+
+
+@dataclass
+class ChunkOutcome:
+    index: int
+    ok: bool
+    source: str | None = None  # "peer" | "server" của lần tải thành công
+    url: str | None = None
+    size: int = 0
+    elapsed_s: float = 0.0
+    bad: list[tuple[int, str]] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class DownloadResult:
+    path: Path
+    chunks_from_peer: int = 0
+    chunks_from_server: int = 0
+    chunks_reused: int = 0
+    bad_chunks: list[tuple[int, str]] = field(default_factory=list)
+    sources: dict[int, str] = field(default_factory=dict)
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        while block := f.read(BYTES_PER_MB):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def variant_paths(cache_dir: Path, variant: dict[str, Any]) -> tuple[Path, Path]:
+    """(file hoàn chỉnh, file .part) trong cache_dir/<variant_id>/."""
+    folder = cache_dir / variant["id"]
+    final = folder / variant["file"]
+    return final, final.with_name(final.name + ".part")
+
+
+def attempts_for(item: dict[str, Any], max_attempts: int = MAX_ATTEMPTS) -> list[tuple[str, str]]:
+    """Danh sách (url, nguồn) theo thứ tự thử: nguồn chính trước, rồi fallback_url."""
+    first = (item["url"], item["source"])
+    fallback = item.get("fallback_url")
+    retry = (fallback, "server") if fallback else first
+    return [first] + [retry] * (max_attempts - 1)
+
+
+class ChunkDownloader:
+    def __init__(
+        self,
+        api: ApiClient,
+        device_id: str,
+        *,
+        max_workers: int = MAX_PARALLEL,
+        timeout_s: float = CHUNK_TIMEOUT_S,
+        max_attempts: int = MAX_ATTEMPTS,
+        report_every: int = REPORT_EVERY,
+        log: Logger = print,
+    ) -> None:
+        self.api = api
+        self.device_id = device_id
+        self.max_workers = max(1, min(MAX_PARALLEL, max_workers))
+        self.timeout_s = timeout_s
+        self.max_attempts = max_attempts
+        self.report_every = report_every
+        self.log = log
+        self._local = threading.local()
+
+    # ------------------------------------------------------------ tải một miếng
+
+    def _session(self) -> requests.Session:
+        session = getattr(self._local, "session", None)
+        if session is None:
+            session = self._local.session = new_session()
+        return session
+
+    def _fetch(self, url: str, expected_size: int) -> bytes:
+        with self._session().get(url, stream=True, timeout=self.timeout_s) as resp:
+            if resp.status_code != 200:
+                raise OSError(f"HTTP {resp.status_code}")
+            parts: list[bytes] = []
+            received = 0
+            for block in resp.iter_content(READ_BLOCK):
+                received += len(block)
+                if received > expected_size:
+                    raise OSError(f"nhận nhiều hơn {expected_size} byte")
+                parts.append(block)
+            return b"".join(parts)
+
+    def _download_chunk(self, item: dict[str, Any], writer: Callable[[int, bytes], None]) -> ChunkOutcome:
+        outcome = ChunkOutcome(index=item["index"], ok=False)
+        for url, source in attempts_for(item, self.max_attempts):
+            start = time.perf_counter()
+            try:
+                data = self._fetch(url, item["size_bytes"])
+            except (requests.RequestException, OSError) as exc:
+                outcome.bad.append((item["index"], url))
+                outcome.errors.append(f"{source} {url}: {type(exc).__name__}: {exc}")
+                continue
+            digest = hashlib.sha256(data).hexdigest()
+            if len(data) != item["size_bytes"] or digest != item["sha256"]:
+                outcome.bad.append((item["index"], url))
+                outcome.errors.append(
+                    f"{source} {url}: sai sha256 ({len(data)} byte, {digest[:12]}…)"
+                )
+                continue
+            writer(item["offset"], data)
+            outcome.ok = True
+            outcome.source = source
+            outcome.url = url
+            outcome.size = len(data)
+            outcome.elapsed_s = time.perf_counter() - start
+            return outcome
+        return outcome
+
+    # ------------------------------------------------------------ dùng lại miếng có sẵn
+
+    def _reusable(self, path: Path, size_bytes: int, plan: Sequence[dict[str, Any]]) -> set[int]:
+        if not path.is_file() or path.stat().st_size != size_bytes:
+            return set()
+        ok: set[int] = set()
+        with path.open("rb") as f:
+            for item in plan:
+                f.seek(item["offset"])
+                if hashlib.sha256(f.read(item["size_bytes"])).hexdigest() == item["sha256"]:
+                    ok.add(item["index"])
+        return ok
+
+    # ------------------------------------------------------------ toàn bộ
+
+    def download(
+        self,
+        request_id: str,
+        variant: dict[str, Any],
+        plan: Sequence[dict[str, Any]],
+        cache_dir: Path,
+    ) -> DownloadResult:
+        final, part = variant_paths(cache_dir, variant)
+        final.parent.mkdir(parents=True, exist_ok=True)
+        size_bytes = variant["size_bytes"]
+        result = DownloadResult(path=final)
+
+        if final.is_file():
+            if final.stat().st_size == size_bytes and sha256_file(final) == variant["sha256"]:
+                reused = {item["index"] for item in plan}
+            else:
+                final.unlink()
+                reused = set()
+        else:
+            reused = self._reusable(part, size_bytes, plan)
+        if final.is_file():
+            target = final
+        else:
+            target = part
+            if not reused:
+                with part.open("wb") as f:
+                    f.truncate(size_bytes)  # tạo trước đủ kích thước, ghi theo offset
+        if reused:
+            self.log(f"  Dùng lại {len(reused)} miếng đã có đúng hash trên đĩa")
+        result.chunks_reused = len(reused)
+
+        todo = [item for item in plan if item["index"] not in reused]
+        pending_chunks: list[int] = sorted(reused)
+        pending_bad: list[tuple[int, str]] = []
+        failures: list[ChunkOutcome] = []
+        window = {"start": time.perf_counter(), "server_bytes": 0}
+        lock = threading.Lock()
+        done_count = len(reused)
+        total = len(plan)
+
+        def report(complete: bool) -> None:
+            elapsed = time.perf_counter() - window["start"]
+            server_bytes = window["server_bytes"]
+            bandwidth = server_bytes * 8 / 1000 / elapsed if server_bytes and elapsed > 0 else None
+            payload = build_have(
+                device_id=self.device_id,
+                request_id=request_id,
+                variant_id=variant["id"],
+                chunks=pending_chunks,
+                complete=complete,
+                bandwidth_kbps=bandwidth,
+                bad_chunks=pending_bad,
+            )
+            response = self.api.have(payload)
+            bw_text = f"{bandwidth:,.0f} kbps" if bandwidth else "null"
+            self.log(
+                f"  → /api/have: {len(payload['chunks'])} miếng mới, complete={complete}, "
+                f"băng thông server {bw_text}, bad_chunks={len(payload['bad_chunks'])} "
+                f"← {response.get('action')}"
+            )
+            pending_chunks.clear()
+            pending_bad.clear()
+            window["start"] = time.perf_counter()
+            window["server_bytes"] = 0
+            if response.get("action") == "switch" and response.get("new_variant_id"):
+                raise SwitchRequested(response["new_variant_id"], response.get("reason"))
+
+        handle = None if target is final else part.open("r+b")
+
+        def write_at(offset: int, data: bytes) -> None:
+            assert handle is not None
+            with lock:
+                handle.seek(offset)
+                handle.write(data)
+
+        executor = ThreadPoolExecutor(max_workers=self.max_workers, thread_name_prefix="chunk")
+        try:
+            futures: set[Future[ChunkOutcome]] = {
+                executor.submit(self._download_chunk, item, write_at) for item in todo
+            }
+            while futures:
+                finished, futures = wait(futures, return_when=FIRST_COMPLETED)
+                for future in finished:
+                    outcome = future.result()
+                    for err in outcome.errors:
+                        self.log(f"  [cảnh báo] miếng {outcome.index}: {err}")
+                    pending_bad.extend(outcome.bad)
+                    result.bad_chunks.extend(outcome.bad)
+                    if not outcome.ok:
+                        failures.append(outcome)
+                        self.log(f"  [LỖI] miếng {outcome.index}: hết {self.max_attempts} lần thử")
+                        continue
+                    done_count += 1
+                    result.sources[outcome.index] = outcome.source or "server"
+                    if outcome.source == "peer":
+                        result.chunks_from_peer += 1
+                    else:
+                        result.chunks_from_server += 1
+                        window["server_bytes"] += outcome.size
+                    pending_chunks.append(outcome.index)
+                    arrow = "peer  " if outcome.source == "peer" else "server"
+                    self.log(
+                        f"  [{done_count:>3}/{total}] miếng {outcome.index:>3} ← {arrow} "
+                        f"{outcome.size / BYTES_PER_MB:5.2f} MB  {outcome.elapsed_s:6.2f} s  "
+                        "sha256 OK"
+                    )
+                    # lần báo cuối gộp với complete=true, không báo hai lần liền nhau
+                    if len(pending_chunks) >= self.report_every and futures:
+                        report(complete=False)
+        except SwitchRequested:
+            executor.shutdown(wait=False, cancel_futures=True)
+            raise
+        finally:
+            executor.shutdown(wait=True, cancel_futures=True)
+            if handle is not None:
+                handle.close()
+
+        if failures:
+            if pending_chunks or pending_bad:
+                report(complete=False)
+            failed = ", ".join(str(f.index) for f in failures)
+            raise DownloadError(f"Không tải được miếng {failed} sau {self.max_attempts} lần thử")
+
+        if target is part:
+            digest = sha256_file(part)
+            if digest != variant["sha256"]:
+                if pending_chunks or pending_bad:
+                    report(complete=False)
+                part.unlink(missing_ok=True)
+                raise DownloadError(
+                    f"SHA-256 toàn file sai: {digest[:16]}… khác {variant['sha256'][:16]}…"
+                )
+            os.replace(part, final)
+        self.log(f"  SHA-256 toàn file khớp {variant['sha256'][:16]}… → {final.name}")
+        report(complete=True)
+        return result
