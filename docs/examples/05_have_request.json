@@ -1,0 +1,14 @@
+{
+  "device_id": "phoneB",
+  "request_id": "r-0002",
+  "variant_id": "mobilenetv2_int8",
+  "chunks": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "complete": true,
+  "bandwidth_kbps": 1870,
+  "bad_chunks": []
+}

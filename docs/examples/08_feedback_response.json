@@ -1,0 +1,6 @@
+{
+  "action": "keep",
+  "new_variant_id": null,
+  "applies_to_class": "android_arm64_4-8gb",
+  "reason": "Thời gian suy luận 18,5 ms dưới ngưỡng 50 ms của lớp; giữ mobilenetv2_int8."
+}
