@@ -14,6 +14,7 @@ Quy tắc (mục 8 của protocol):
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import threading
 import time
@@ -33,6 +34,7 @@ MAX_ATTEMPTS = 3
 REPORT_EVERY = 4
 READ_BLOCK = 64 * 1024
 BYTES_PER_MB = 1024 * 1024
+META_FILE = "variant.json"  # khối variant lưu cạnh file model đã kiểm hash
 
 Logger = Callable[[str], None]
 
@@ -87,6 +89,37 @@ def variant_paths(cache_dir: Path, variant: dict[str, Any]) -> tuple[Path, Path]
     return final, final.with_name(final.name + ".part")
 
 
+def save_variant_meta(cache_dir: Path, variant: dict[str, Any]) -> None:
+    """Ghi khối variant cạnh file model, chỉ gọi sau khi SHA-256 toàn file khớp."""
+    final, _ = variant_paths(cache_dir, variant)
+    (final.parent / META_FILE).write_text(json.dumps(variant, ensure_ascii=False), encoding="utf-8")
+
+
+def verified_variants(cache_dir: Path) -> dict[str, tuple[dict[str, Any], Path]]:
+    """Kho cục bộ: variant đủ file và SHA-256 toàn file khớp -> (khối variant, file).
+
+    Khóa theo `variant_id` (thư mục riêng cho mỗi variant), không suy từ tên file.
+    """
+    found: dict[str, tuple[dict[str, Any], Path]] = {}
+    if not cache_dir.is_dir():
+        return found
+    for meta_path in sorted(cache_dir.glob(f"*/{META_FILE}")):
+        try:
+            variant = json.loads(meta_path.read_text(encoding="utf-8"))
+            final, _ = variant_paths(cache_dir, variant)
+            if meta_path.parent.name != variant["id"]:
+                continue
+            if (
+                final.is_file()
+                and final.stat().st_size == variant["size_bytes"]
+                and sha256_file(final) == variant["sha256"]
+            ):
+                found[variant["id"]] = (variant, final)
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return found
+
+
 def attempts_for(item: dict[str, Any], max_attempts: int = MAX_ATTEMPTS) -> list[tuple[str, str]]:
     """Danh sách (url, nguồn) theo thứ tự thử: nguồn chính trước, rồi fallback_url."""
     first = (item["url"], item["source"])
@@ -137,7 +170,9 @@ class ChunkDownloader:
                 parts.append(block)
             return b"".join(parts)
 
-    def _download_chunk(self, item: dict[str, Any], writer: Callable[[int, bytes], None]) -> ChunkOutcome:
+    def _download_chunk(
+        self, item: dict[str, Any], writer: Callable[[int, bytes], None]
+    ) -> ChunkOutcome:
         outcome = ChunkOutcome(index=item["index"], ok=False)
         for url, source in attempts_for(item, self.max_attempts):
             start = time.perf_counter()
