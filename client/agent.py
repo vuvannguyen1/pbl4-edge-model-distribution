@@ -1,7 +1,8 @@
 """Client agent: register -> probe -> request -> tải -> have -> inference -> feedback.
 
 Chạy:
-    python -m client.agent --server http://localhost:8000 --device-id laptopA --image samples\\cat.jpg
+    python -m client.agent --server http://localhost:8000 --device-id laptopA ^
+        --image samples\\dog.jpg
 
 Mã thoát: 0 thành công, 2 server báo NO_VARIANT_FITS, 1 lỗi khác.
 """
@@ -9,7 +10,6 @@ Mã thoát: 0 thành công, 2 server báo NO_VARIANT_FITS, 1 lỗi khác.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 import time
 from collections.abc import Callable, Sequence
@@ -24,14 +24,14 @@ from client.downloader import (
     DownloadError,
     DownloadResult,
     SwitchRequested,
-    sha256_file,
-    variant_paths,
+    save_variant_meta,
+    verified_variants,
 )
 from client.inference import InferenceResult, load_labels, run_inference
+from client.peer import PeerService
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_LABELS = REPO_ROOT / "samples" / "imagenet_synset.txt"
-META_FILE = "variant.json"
 EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_NO_VARIANT = 2
@@ -82,34 +82,6 @@ class AgentResult:
     history: list[str] = field(default_factory=list)  # các variant đã xin, theo thứ tự
 
 
-# ---------------------------------------------------------------- kho model cục bộ
-
-
-def save_variant_meta(cache_dir: Path, variant: dict[str, Any]) -> None:
-    final, _ = variant_paths(cache_dir, variant)
-    (final.parent / META_FILE).write_text(json.dumps(variant, ensure_ascii=False), encoding="utf-8")
-
-
-def verified_variants(cache_dir: Path) -> dict[str, tuple[dict[str, Any], Path]]:
-    """Variant đã có đủ trong cache và SHA-256 toàn file khớp: id -> (khối variant, file)."""
-    found: dict[str, tuple[dict[str, Any], Path]] = {}
-    if not cache_dir.is_dir():
-        return found
-    for meta_path in sorted(cache_dir.glob(f"*/{META_FILE}")):
-        try:
-            variant = json.loads(meta_path.read_text(encoding="utf-8"))
-            final, _ = variant_paths(cache_dir, variant)
-            if (
-                final.is_file()
-                and final.stat().st_size == variant["size_bytes"]
-                and sha256_file(final) == variant["sha256"]
-            ):
-                found[variant["id"]] = (variant, final)
-        except (OSError, ValueError, KeyError, TypeError):
-            continue
-    return found
-
-
 # ---------------------------------------------------------------- agent
 
 
@@ -121,7 +93,7 @@ class Agent:
         self.cache_dir = config.resolved_cache_dir()
         self.device_class = ""
         self.free_storage_mb: float | None = None
-        self.peer_service: Any = None
+        self.peer_service: PeerService | None = None
 
     def section(self, step: int, title: str) -> None:
         self.out("")
@@ -138,7 +110,11 @@ class Agent:
         self.out(f"  cpu_arch       : {info.cpu_arch}")
         self.out(f"  ram_mb         : {info.ram_mb}")
         self.out(f"  runtime        : {info.runtime}")
-        storage = f"{info.free_storage_mb:,.0f} MB" if info.free_storage_mb is not None else "không đo được"
+        storage = (
+            f"{info.free_storage_mb:,.0f} MB"
+            if info.free_storage_mb is not None
+            else "không đo được"
+        )
         self.out(f"  dung lượng trống: {storage} ({self.cache_dir})")
         self.out(f"  peer_port      : {cfg.peer_port or 'null (không chia sẻ)'}")
         self.free_storage_mb = info.free_storage_mb
@@ -215,6 +191,14 @@ class Agent:
         if response["plan"]:
             parts = ", ".join(f"{n} miếng từ {src}" for src, n in sorted(sources.items()))
             self.out(f"  Kế hoạch tải   : {parts}")
+            peers = sorted(
+                {p["url"].split("/chunks/")[0] for p in response["plan"] if p["source"] == "peer"}
+            )
+            for origin in peers:
+                indexes = [
+                    p["index"] for p in response["plan"] if p["url"].startswith(origin + "/")
+                ]
+                self.out(f"    peer {origin}: miếng {indexes} (fallback về server nếu lỗi)")
         else:
             self.out("  Kế hoạch tải   : rỗng, dùng file đã có trong cache")
         return response
@@ -247,9 +231,7 @@ class Agent:
         cfg = self.config
         self.section(6, f"Chạy suy luận ONNX Runtime ({variant['id']})")
         if not cfg.labels.is_file():
-            raise AgentError(
-                f"Thiếu file nhãn {cfg.labels}. Chạy: python tools/download_assets.py"
-            )
+            raise AgentError(f"Thiếu file nhãn {cfg.labels}. Chạy: python tools/download_assets.py")
         labels = load_labels(cfg.labels)
         result = run_inference(model_path, cfg.image, variant, labels, cfg.runs)
         self.out(f"  Ảnh            : {cfg.image}")
@@ -297,8 +279,10 @@ class Agent:
             f"top-1 {payload['top1_label']} ({payload['top1_confidence']})"
         )
         feedback = self.api.feedback(payload)
-        self.out(f"  Quyết định     : {feedback['action'].upper()}"
-                 + (f" → {feedback['new_variant_id']}" if feedback["new_variant_id"] else ""))
+        self.out(
+            f"  Quyết định     : {feedback['action'].upper()}"
+            + (f" → {feedback['new_variant_id']}" if feedback["new_variant_id"] else "")
+        )
         self.out(f"  Áp dụng cho lớp: {feedback['applies_to_class']}")
         self.out(f"  Lý do          : {feedback['reason']}")
         return payload, feedback
@@ -306,16 +290,41 @@ class Agent:
     # ------------------------------------------------------------ peer (Phase 4)
 
     def start_peer_service(self) -> None:
-        """Bật peer service sau khi có variant hoàn chỉnh (cài ở client/peer.py)."""
+        """Bật peer service (một lần) sau khi có variant hoàn chỉnh đã kiểm hash."""
+        if not self.config.peer_port:
+            return
+        if self.peer_service is None:
+            service = PeerService(self.cache_dir, self.config.peer_port, log=self.out)
+            try:
+                service.start()
+            except OSError as exc:
+                self.out(
+                    f"  [cảnh báo] Không mở được cổng peer {self.config.peer_port}: {exc}. "
+                    "Máy khác sẽ tự tải lại từ server (fallback)."
+                )
+                return
+            self.peer_service = service
+        shared = self.peer_service.refresh()
+        self.out(
+            f"  Peer service đang chạy ở cổng {self.peer_service.port}, chia sẻ: "
+            f"{', '.join(shared) or 'chưa có'}"
+        )
 
     def serve_forever(self) -> None:
         """Giữ tiến trình chạy để máy khác lấy miếng, đến khi bấm Ctrl+C."""
         if self.peer_service is None:
             self.out("  Peer service chưa bật (peer_port = 0 hoặc chưa có variant hoàn chỉnh)")
             return
-        self.out("  Đang phục vụ peer, bấm Ctrl+C để dừng")
-        while True:
-            time.sleep(1)
+        self.out("")
+        self.out(
+            f"Đang phục vụ peer ở cổng {self.peer_service.port} "
+            f"({', '.join(self.peer_service.shared_ids())}). Bấm Ctrl+C để dừng."
+        )
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            self.out(f"Dừng peer service, đã gửi {self.peer_service.served} miếng cho máy khác.")
 
     def stop_peer_service(self) -> None:
         if self.peer_service is not None:
