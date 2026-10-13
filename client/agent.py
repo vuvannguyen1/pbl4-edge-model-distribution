@@ -28,7 +28,7 @@ from client.downloader import (
     verified_variants,
 )
 from client.inference import InferenceResult, load_labels, run_inference
-from client.peer import PeerService
+from client.peer import PeerService, port_available
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_LABELS = REPO_ROOT / "samples" / "imagenet_synset.txt"
@@ -93,6 +93,7 @@ class Agent:
         self.cache_dir = config.resolved_cache_dir()
         self.device_class = ""
         self.free_storage_mb: float | None = None
+        self.peer_port = config.peer_port  # 0 nếu không chia sẻ được
         self.peer_service: PeerService | None = None
 
     def section(self, step: int, title: str) -> None:
@@ -116,7 +117,13 @@ class Agent:
             else "không đo được"
         )
         self.out(f"  dung lượng trống: {storage} ({self.cache_dir})")
-        self.out(f"  peer_port      : {cfg.peer_port or 'null (không chia sẻ)'}")
+        if cfg.peer_port and not port_available(cfg.peer_port):
+            self.out(
+                f"  [cảnh báo] Cổng peer {cfg.peer_port} đang bị chương trình khác dùng; "
+                "đăng ký peer_port = null (không chia sẻ). Dùng --peer-port khác để chia sẻ."
+            )
+            self.peer_port = 0
+        self.out(f"  peer_port      : {self.peer_port or 'null (không chia sẻ)'}")
         self.free_storage_mb = info.free_storage_mb
 
         self.section(2, "Đăng ký với server (POST /api/register)")
@@ -126,7 +133,7 @@ class Agent:
             cpu_arch=info.cpu_arch,
             ram_mb=info.ram_mb,
             runtime=info.runtime,
-            peer_port=cfg.peer_port or None,
+            peer_port=self.peer_port or None,
         )
         response = self.api.register(payload)
         self.device_class = response["device_class"]
@@ -291,15 +298,15 @@ class Agent:
 
     def start_peer_service(self) -> None:
         """Bật peer service (một lần) sau khi có variant hoàn chỉnh đã kiểm hash."""
-        if not self.config.peer_port:
+        if not self.peer_port:
             return
         if self.peer_service is None:
-            service = PeerService(self.cache_dir, self.config.peer_port, log=self.out)
+            service = PeerService(self.cache_dir, self.peer_port, log=self.out)
             try:
                 service.start()
             except OSError as exc:
                 self.out(
-                    f"  [cảnh báo] Không mở được cổng peer {self.config.peer_port}: {exc}. "
+                    f"  [cảnh báo] Không mở được cổng peer {self.peer_port}: {exc}. "
                     "Máy khác sẽ tự tải lại từ server (fallback)."
                 )
                 return

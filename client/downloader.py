@@ -5,7 +5,9 @@ Quy tắc (mục 8 của protocol):
   SHA-256 và so với `plan[].sha256`; khớp mới ghi vào file `.part` tại `offset`.
 - Sai hash hoặc lỗi mạng: ghi vào `bad_chunks` (index, source_url), thử lại từ
   `fallback_url` nếu có; tối đa 3 lần mỗi miếng.
-- Báo `/api/have` mỗi 4 miếng; `bandwidth_kbps` chỉ tính miếng lấy từ server.
+- Báo `/api/have` mỗi 4 miếng; `bandwidth_kbps` = số byte nhận từ server (đếm theo
+  từng khối, kể cả miếng đang tải dở) chia thời gian kể từ lần báo trước; `null`
+  nếu khoảng đó chỉ nhận từ peer.
 - Đủ miếng: kiểm SHA-256 toàn file; khớp mới đổi tên `.part` thành tên thật và
   báo `complete: true`.
 - Miếng đã có sẵn đúng hash trong `.part` hoặc file cũ được dùng lại (tải tiếp).
@@ -89,6 +91,16 @@ def variant_paths(cache_dir: Path, variant: dict[str, Any]) -> tuple[Path, Path]
     return final, final.with_name(final.name + ".part")
 
 
+def describe_error(exc: Exception) -> str:
+    """Mô tả lỗi mạng ngắn gọn cho console."""
+    if isinstance(exc, requests.ConnectionError):
+        return "không kết nối được (peer tắt, firewall hoặc AP isolation)"
+    if isinstance(exc, requests.Timeout):
+        return "quá 10 s không nhận được dữ liệu"
+    text = str(exc)
+    return f"{type(exc).__name__}: {text[:120]}{'…' if len(text) > 120 else ''}"
+
+
 def save_variant_meta(cache_dir: Path, variant: dict[str, Any]) -> None:
     """Ghi khối variant cạnh file model, chỉ gọi sau khi SHA-256 toàn file khớp."""
     final, _ = variant_paths(cache_dir, variant)
@@ -148,6 +160,9 @@ class ChunkDownloader:
         self.report_every = report_every
         self.log = log
         self._local = threading.local()
+        # byte nhận từ server, cộng dồn theo từng khối khi đang tải (để đo băng thông thật)
+        self._server_bytes = 0
+        self._bytes_lock = threading.Lock()
 
     # ------------------------------------------------------------ tải một miếng
 
@@ -157,7 +172,12 @@ class ChunkDownloader:
             session = self._local.session = new_session()
         return session
 
-    def _fetch(self, url: str, expected_size: int) -> bytes:
+    def _take_server_bytes(self) -> int:
+        with self._bytes_lock:
+            taken, self._server_bytes = self._server_bytes, 0
+            return taken
+
+    def _fetch(self, url: str, expected_size: int, from_server: bool = False) -> bytes:
         with self._session().get(url, stream=True, timeout=self.timeout_s) as resp:
             if resp.status_code != 200:
                 raise OSError(f"HTTP {resp.status_code}")
@@ -165,6 +185,9 @@ class ChunkDownloader:
             received = 0
             for block in resp.iter_content(READ_BLOCK):
                 received += len(block)
+                if from_server:
+                    with self._bytes_lock:
+                        self._server_bytes += len(block)
                 if received > expected_size:
                     raise OSError(f"nhận nhiều hơn {expected_size} byte")
                 parts.append(block)
@@ -177,10 +200,10 @@ class ChunkDownloader:
         for url, source in attempts_for(item, self.max_attempts):
             start = time.perf_counter()
             try:
-                data = self._fetch(url, item["size_bytes"])
+                data = self._fetch(url, item["size_bytes"], from_server=source == "server")
             except (requests.RequestException, OSError) as exc:
                 outcome.bad.append((item["index"], url))
-                outcome.errors.append(f"{source} {url}: {type(exc).__name__}: {exc}")
+                outcome.errors.append(f"{source} {url}: {describe_error(exc)}")
                 continue
             digest = hashlib.sha256(data).hexdigest()
             if len(data) != item["size_bytes"] or digest != item["sha256"]:
@@ -248,14 +271,15 @@ class ChunkDownloader:
         pending_chunks: list[int] = sorted(reused)
         pending_bad: list[tuple[int, str]] = []
         failures: list[ChunkOutcome] = []
-        window = {"start": time.perf_counter(), "server_bytes": 0}
+        self._take_server_bytes()
+        window = {"start": time.perf_counter()}
         lock = threading.Lock()
         done_count = len(reused)
         total = len(plan)
 
         def report(complete: bool) -> None:
             elapsed = time.perf_counter() - window["start"]
-            server_bytes = window["server_bytes"]
+            server_bytes = self._take_server_bytes()
             bandwidth = server_bytes * 8 / 1000 / elapsed if server_bytes and elapsed > 0 else None
             payload = build_have(
                 device_id=self.device_id,
@@ -276,7 +300,6 @@ class ChunkDownloader:
             pending_chunks.clear()
             pending_bad.clear()
             window["start"] = time.perf_counter()
-            window["server_bytes"] = 0
             if response.get("action") == "switch" and response.get("new_variant_id"):
                 raise SwitchRequested(response["new_variant_id"], response.get("reason"))
 
@@ -311,7 +334,6 @@ class ChunkDownloader:
                         result.chunks_from_peer += 1
                     else:
                         result.chunks_from_server += 1
-                        window["server_bytes"] += outcome.size
                     pending_chunks.append(outcome.index)
                     arrow = "peer  " if outcome.source == "peer" else "server"
                     self.log(

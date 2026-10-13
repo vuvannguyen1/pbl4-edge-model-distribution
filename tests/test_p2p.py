@@ -240,3 +240,28 @@ def test_peer_service_serves_only_verified_variants(tmp_path: Path) -> None:
         assert peer.refresh() == []
     finally:
         peer.stop()
+
+
+def test_port_available_detects_busy_port() -> None:
+    from client.peer import port_available
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as busy:
+        busy.bind(("0.0.0.0", 0))
+        busy.listen()
+        port = busy.getsockname()[1]
+        assert not port_available(port)
+
+
+def test_busy_peer_port_registers_null(tmp_path: Path, live_server) -> None:
+    server = live_server()
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as busy:
+        busy.bind(("0.0.0.0", 0))
+        busy.listen()
+        port = busy.getsockname()[1]
+        agent = make_agent(
+            server.url, "busyPort", tmp_path, make_test_image(tmp_path / "a.jpg"), peer_port=port
+        )
+        agent.step_register()
+    device = server.app.state.service.devices.get("busyPort")
+    assert device is not None and device.peer_port is None
+    assert agent.peer_port == 0
