@@ -484,6 +484,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\nĐã dừng (Ctrl+C)")
         return EXIT_ERROR
+    except Exception as exc:  # lỗi ảnh/ONNX/đĩa: báo gọn cho người xem demo
+        print(f"\n[LỖI] {type(exc).__name__}: {exc}")
+        return EXIT_ERROR
     finally:
         agent.stop_peer_service()
 
