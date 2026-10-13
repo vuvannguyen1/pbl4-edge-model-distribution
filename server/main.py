@@ -33,7 +33,9 @@ from server.service import DistributionService
 
 logger = logging.getLogger("pbl4.server")
 
-STREAM_BLOCK_BYTES = 64 * 1024
+# Khối nhỏ để khi giới hạn tốc độ thấp và 4 kết nối song song, mỗi kết nối vẫn nhận
+# byte đều đặn (client chờ tối đa 10 s không có byte nào).
+STREAM_BLOCK_BYTES = 16 * 1024
 PROBE_MIN_KB = 16
 PROBE_MAX_KB = 1024
 PROBE_DEFAULT_KB = 256
