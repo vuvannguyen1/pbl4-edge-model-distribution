@@ -29,3 +29,7 @@ packages = ["server", "client"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    # starlette.testclient khuyên dùng httpx2; httpx vẫn chạy đúng
+    "ignore:Using `httpx` with `starlette.testclient`",
+]
