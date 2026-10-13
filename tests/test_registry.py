@@ -15,8 +15,19 @@ from server.registry import Registry, safe_storage_path
 from server.selector import SelectionContext, apply_hard_filters
 
 VARIANT_FIELDS = {
-    "id", "file", "base_model", "level", "precision", "size_bytes", "sha256",
-    "chunk_size", "chunk_count", "top1_accuracy", "input_shape", "input_dtype", "normalize",
+    "id",
+    "file",
+    "base_model",
+    "level",
+    "precision",
+    "size_bytes",
+    "sha256",
+    "chunk_size",
+    "chunk_count",
+    "top1_accuracy",
+    "input_shape",
+    "input_dtype",
+    "normalize",
 }
 
 
@@ -103,9 +114,16 @@ def test_new_artifact_becomes_candidate_without_code_change(fake_store) -> None:
 
     registry.refresh_if_changed()
     context = SelectionContext(
-        device_id="d", device_class="linux_x64_gt8gb", platform="linux", cpu_arch="x86_64",
-        ram_mb=16384, runtime="onnxruntime", task="image_classification",
-        bandwidth_kbps=None, deadline_s=60, free_storage_mb=None,
+        device_id="d",
+        device_class="linux_x64_gt8gb",
+        platform="linux",
+        cpu_arch="x86_64",
+        ram_mb=16384,
+        runtime="onnxruntime",
+        task="image_classification",
+        bandwidth_kbps=None,
+        deadline_s=60,
+        free_storage_mb=None,
     )
     candidates, _ = apply_hard_filters(registry.ready_variants(), context)
     assert {c.variant_id for c in candidates} == {"alpha_fp32", "beta_int8"}

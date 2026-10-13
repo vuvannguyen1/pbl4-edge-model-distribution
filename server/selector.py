@@ -145,7 +145,7 @@ def no_fit_message(context: SelectionContext, rejections: Sequence[Rejection]) -
     if context.bandwidth_kbps:
         head = (
             f"Không có phiên bản nào tải kịp trong {fmt_num(context.deadline_s)} giây "
-            f"ở {fmt_num(context.bandwidth_kbps)} kbps"
+            f"ở {fmt_num(context.bandwidth_kbps, 0)} kbps"
         )
     else:
         head = "Không có phiên bản nào phù hợp"
@@ -164,9 +164,7 @@ class ModelSelector(ABC):
     version: str = "abstract"
 
     @abstractmethod
-    def select(
-        self, context: SelectionContext, candidates: Sequence[Candidate]
-    ) -> SelectionResult:
+    def select(self, context: SelectionContext, candidates: Sequence[Candidate]) -> SelectionResult:
         """Trả variant được chọn. `candidates` không rỗng và đã qua bộ lọc cứng."""
 
 
@@ -188,9 +186,7 @@ class RuleBasedSelector(ModelSelector):
 
     version = "rule-v1"
 
-    def select(
-        self, context: SelectionContext, candidates: Sequence[Candidate]
-    ) -> SelectionResult:
+    def select(self, context: SelectionContext, candidates: Sequence[Candidate]) -> SelectionResult:
         if not candidates:
             raise NoVariantFits(no_fit_message(context, []), [])
 
@@ -217,7 +213,7 @@ class RuleBasedSelector(ModelSelector):
         chosen = ranked[0]
         if context.bandwidth_kbps:
             head = (
-                f"Băng thông {fmt_num(context.bandwidth_kbps)} kbps, "
+                f"Băng thông {fmt_num(context.bandwidth_kbps, 0)} kbps, "
                 f"hạn {fmt_num(context.deadline_s)} s"
             )
         else:
@@ -229,8 +225,7 @@ class RuleBasedSelector(ModelSelector):
         rejected = tuple(
             Rejection(
                 c.variant_id,
-                f"top-1 {c.variant.top1_accuracy:.4f} thấp hơn "
-                f"{chosen.variant.top1_accuracy:.4f}"
+                f"top-1 {c.variant.top1_accuracy:.4f} thấp hơn {chosen.variant.top1_accuracy:.4f}"
                 if c.variant.top1_accuracy < chosen.variant.top1_accuracy
                 else "cùng top-1 nhưng file lớn hơn",
             )
@@ -247,9 +242,7 @@ class FallbackSelector(ModelSelector):
         self.fallback = fallback
         self.version = primary.version
 
-    def select(
-        self, context: SelectionContext, candidates: Sequence[Candidate]
-    ) -> SelectionResult:
+    def select(self, context: SelectionContext, candidates: Sequence[Candidate]) -> SelectionResult:
         allowed = {c.variant_id for c in candidates}
         try:
             result = self.primary.select(context, candidates)
@@ -288,9 +281,7 @@ class MLSelectorPlaceholder(ModelSelector):
 
     version = "ml-placeholder"
 
-    def select(
-        self, context: SelectionContext, candidates: Sequence[Candidate]
-    ) -> SelectionResult:
+    def select(self, context: SelectionContext, candidates: Sequence[Candidate]) -> SelectionResult:
         raise NotImplementedError("ML Selector chưa được huấn luyện")
 
 

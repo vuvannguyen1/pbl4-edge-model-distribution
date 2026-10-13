@@ -156,7 +156,9 @@ class ApiClient:
         try:
             resp = self.session.post(f"{self.server_url}{path}", json=payload, timeout=self.timeout)
         except requests.RequestException as exc:
-            raise ApiError(None, "CONNECTION", f"Không kết nối được {self.server_url}: {exc}") from exc
+            raise ApiError(
+                None, "CONNECTION", f"Không kết nối được {self.server_url}: {exc}"
+            ) from exc
         return self._parse(resp)
 
     @staticmethod

@@ -336,14 +336,16 @@ def test_have_with_bad_chunks_and_null_bandwidth(client: TestClient) -> None:
 def test_have_errors(client: TestClient) -> None:
     register(client)
     rid = request_model(client, bandwidth_kbps=600).json()["request_id"]
-    assert_error(client.post("/api/have", json=_have(rid, device_id="ghost")), 404, "UNKNOWN_DEVICE")
+    assert_error(
+        client.post("/api/have", json=_have(rid, device_id="ghost")), 404, "UNKNOWN_DEVICE"
+    )
     assert_error(client.post("/api/have", json=_have("r-9999")), 400, "BAD_REQUEST")
     assert_error(
-        client.post("/api/have", json=_have(rid, variant_id="resnet50_fp32")), 404, "UNKNOWN_VARIANT"
+        client.post("/api/have", json=_have(rid, variant_id="resnet50_fp32")),
+        404,
+        "UNKNOWN_VARIANT",
     )
-    assert_error(
-        client.post("/api/have", json=_have(rid, chunks=[99])), 404, "CHUNK_OUT_OF_RANGE"
-    )
+    assert_error(client.post("/api/have", json=_have(rid, chunks=[99])), 404, "CHUNK_OUT_OF_RANGE")
     assert_error(client.post("/api/have", json=_have(rid, extra=1)), 400, "BAD_REQUEST")
     register(client, device_id="phoneC")
     assert_error(client.post("/api/have", json=_have(rid, device_id="phoneC")), 400, "BAD_REQUEST")

@@ -348,7 +348,9 @@ class DistributionService:
                 and url_origin(bad.source_url) == url_origin(item.url)
             ):
                 self.state.ban_origin(url_origin(item.url))
-                logger.warning("[%s] Ngừng giao peer %s cho các plan sau", rid, url_origin(item.url))
+                logger.warning(
+                    "[%s] Ngừng giao peer %s cho các plan sau", rid, url_origin(item.url)
+                )
 
         have_count, total = self.state.add_chunks(rid, req.chunks)
         bandwidth = f"{fmt_num(req.bandwidth_kbps)} kbps" if req.bandwidth_kbps else "null"

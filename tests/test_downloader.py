@@ -82,8 +82,12 @@ class FakeApi:
         assert schema_errors("HaveRequest", payload) == []
         self.haves.append(payload)
         if self.switch_after is not None and len(self.haves) >= self.switch_after:
-            return {"ok": True, "action": "switch", "new_variant_id": "smaller_int8",
-                    "reason": "băng thông tụt"}
+            return {
+                "ok": True,
+                "action": "switch",
+                "new_variant_id": "smaller_int8",
+                "reason": "băng thông tụt",
+            }
         return {"ok": True, "action": "continue", "new_variant_id": None, "reason": None}
 
 
@@ -115,17 +119,29 @@ def make_plan(
         server.routes[f"/api/chunks/{variant['id']}/{i}"] = piece
         if i in peer_indexes:
             base = peer_url or (peer.url if peer else "http://127.0.0.1:9")
-            plan.append({
-                "index": i, "offset": i * CHUNK, "size_bytes": len(piece),
-                "sha256": hashlib.sha256(piece).hexdigest(), "source": "peer",
-                "url": f"{base}/chunks/{variant['id']}/{i}", "fallback_url": server_url,
-            })
+            plan.append(
+                {
+                    "index": i,
+                    "offset": i * CHUNK,
+                    "size_bytes": len(piece),
+                    "sha256": hashlib.sha256(piece).hexdigest(),
+                    "source": "peer",
+                    "url": f"{base}/chunks/{variant['id']}/{i}",
+                    "fallback_url": server_url,
+                }
+            )
         else:
-            plan.append({
-                "index": i, "offset": i * CHUNK, "size_bytes": len(piece),
-                "sha256": hashlib.sha256(piece).hexdigest(), "source": "server",
-                "url": server_url, "fallback_url": None,
-            })
+            plan.append(
+                {
+                    "index": i,
+                    "offset": i * CHUNK,
+                    "size_bytes": len(piece),
+                    "sha256": hashlib.sha256(piece).hexdigest(),
+                    "source": "server",
+                    "url": server_url,
+                    "fallback_url": None,
+                }
+            )
     return plan
 
 

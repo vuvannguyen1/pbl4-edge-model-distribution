@@ -13,9 +13,7 @@ def test_all_nine_examples_present() -> None:
     assert prefixes == set(EXAMPLE_DEFS)
 
 
-@pytest.mark.parametrize(
-    ("path", "def_name"), example_files(), ids=lambda v: getattr(v, "name", v)
-)
+@pytest.mark.parametrize(("path", "def_name"), example_files(), ids=lambda v: getattr(v, "name", v))
 def test_example_matches_schema(path, def_name) -> None:
     instance = json.loads(path.read_text(encoding="utf-8"))
     assert schema_errors(def_name, instance) == []

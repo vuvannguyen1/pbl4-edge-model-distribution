@@ -153,7 +153,9 @@ class Registry:
                 chunks = _check_chunks(entry)
                 protocol_variant = to_protocol_variant(entry)
             except (KeyError, TypeError, ValueError, ValidationError) as exc:
-                logger.warning("Registry: %s thiếu/sai metadata, không phân phối: %s", variant_id, exc)
+                logger.warning(
+                    "Registry: %s thiếu/sai metadata, không phân phối: %s", variant_id, exc
+                )
                 continue
             if safe_storage_path(self.model_store, entry.get("storage_path", "")) is None:
                 logger.warning("Registry: %s có storage_path không an toàn, bỏ qua", variant_id)

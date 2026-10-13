@@ -6,7 +6,14 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from conftest import MODEL_STORE, NORMALIZE, REPO_ROOT, make_test_image, real_registry_variants, requires_models
+from conftest import (
+    MODEL_STORE,
+    NORMALIZE,
+    REPO_ROOT,
+    make_test_image,
+    real_registry_variants,
+    requires_models,
+)
 
 from client.inference import load_labels, peak_ram_mb, preprocess, run_inference, softmax, top_k
 

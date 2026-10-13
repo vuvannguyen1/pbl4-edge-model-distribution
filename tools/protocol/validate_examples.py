@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import sys
-from functools import lru_cache
+from functools import cache, lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +40,7 @@ def load_schema() -> dict[str, Any]:
     return json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
 
 
-@lru_cache(maxsize=None)
+@cache
 def validator_for(def_name: str) -> Draft202012Validator:
     """Validator cho một mục $defs, giữ nguyên $defs để $ref nội bộ hoạt động."""
     root = load_schema()

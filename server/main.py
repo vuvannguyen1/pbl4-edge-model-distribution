@@ -183,9 +183,7 @@ async def stream_random(size: int, bucket: TokenBucket) -> AsyncIterator[bytes]:
 # ---------------------------------------------------------------- app
 
 
-def create_app(
-    settings: Settings | None = None, selector: ModelSelector | None = None
-) -> FastAPI:
+def create_app(settings: Settings | None = None, selector: ModelSelector | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     setup_logging(settings.logs_dir)
     registry = Registry(settings.registry_path, settings.model_store)
