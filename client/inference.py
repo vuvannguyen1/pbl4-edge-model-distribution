@@ -71,7 +71,9 @@ def preprocess(image_path: Path, variant: dict[str, Any]) -> np.ndarray:
         std = np.asarray(variant["normalize"]["std"], dtype=np.float32)
         tensor = ((array / 255.0) - mean) / std
     tensor = np.transpose(tensor, (2, 0, 1))[np.newaxis, ...]  # NCHW
-    return np.ascontiguousarray(tensor, dtype=np.uint8 if variant.get("input_dtype") == "uint8" else np.float32)
+    return np.ascontiguousarray(
+        tensor, dtype=np.uint8 if variant.get("input_dtype") == "uint8" else np.float32
+    )
 
 
 def softmax(logits: np.ndarray) -> np.ndarray:

@@ -72,9 +72,7 @@ class Settings:
                 "PBL4_RATE_LIMIT_KBPS", env.get("PBL4_RATE_LIMIT_KBPS", "0")
             ),
             public_base_url=env.get("PBL4_PUBLIC_BASE_URL", "").strip().rstrip("/"),
-            peer_enabled=_parse_bool(
-                "PBL4_PEER_ENABLED", env.get("PBL4_PEER_ENABLED", "true")
-            ),
+            peer_enabled=_parse_bool("PBL4_PEER_ENABLED", env.get("PBL4_PEER_ENABLED", "true")),
             latency_slo_ms=_parse_non_negative(
                 "PBL4_LATENCY_SLO_MS", env.get("PBL4_LATENCY_SLO_MS", "500")
             ),

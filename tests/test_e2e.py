@@ -58,8 +58,13 @@ def test_second_run_uses_cached_file_with_empty_plan(tmp_path: Path, live_server
     server = live_server()
     image = make_test_image(tmp_path / "anh.jpg")
     config = AgentConfig(
-        server=server.url, device_id="e2eB", image=image, bandwidth_kbps=600,
-        peer_port=0, cache_dir=tmp_path / "cache", runs=2,
+        server=server.url,
+        device_id="e2eB",
+        image=image,
+        bandwidth_kbps=600,
+        peer_port=0,
+        cache_dir=tmp_path / "cache",
+        runs=2,
     )
     first = Agent(config, out=lambda _: None).run()
     assert "mobilenetv2_int8" in verified_variants(tmp_path / "cache")
@@ -75,10 +80,22 @@ def test_no_variant_fits_exit_code(tmp_path: Path, live_server) -> None:
 
     server = live_server()
     image = make_test_image(tmp_path / "anh.jpg")
-    code = main([
-        "--server", server.url, "--device-id", "e2eC", "--image", str(image),
-        "--bandwidth", "100", "--peer-port", "0", "--cache-dir", str(tmp_path / "c"),
-    ])
+    code = main(
+        [
+            "--server",
+            server.url,
+            "--device-id",
+            "e2eC",
+            "--image",
+            str(image),
+            "--bandwidth",
+            "100",
+            "--peer-port",
+            "0",
+            "--cache-dir",
+            str(tmp_path / "c"),
+        ]
+    )
     assert code == EXIT_NO_VARIANT
 
 
@@ -88,8 +105,14 @@ def test_follow_switch_requests_smaller_variant(tmp_path: Path, live_server) -> 
     server = live_server(latency_slo_ms=0.0001)
     image = make_test_image(tmp_path / "anh.jpg")
     config = AgentConfig(
-        server=server.url, device_id="e2eD", image=image, bandwidth_kbps=2000,
-        peer_port=0, cache_dir=tmp_path / "cache", runs=2, follow_switch=True,
+        server=server.url,
+        device_id="e2eD",
+        image=image,
+        bandwidth_kbps=2000,
+        peer_port=0,
+        cache_dir=tmp_path / "cache",
+        runs=2,
+        follow_switch=True,
     )
     result = Agent(config, out=lambda _: None).run()
     assert result.history == ["mobilenetv2_fp32", "mobilenetv2_int8"]

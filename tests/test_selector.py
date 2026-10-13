@@ -108,9 +108,7 @@ def test_hard_filter_rejections_have_reasons(registry: Registry) -> None:
     rejected = {r.variant_id: r.reason for r in rejections}
     assert "resnet50_fp32" in rejected
     assert "164.1 s" in rejected["resnet50_fp32"]
-    assert all(
-        download_seconds(c.variant.size_bytes, 5_000) <= DEADLINE_S for c in candidates
-    )
+    assert all(download_seconds(c.variant.size_bytes, 5_000) <= DEADLINE_S for c in candidates)
 
 
 def test_reason_mentions_numbers(registry: Registry) -> None:

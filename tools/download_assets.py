@@ -18,19 +18,15 @@ import requests
 from PIL import Image
 
 SYNSET_URL = (
-    "https://raw.githubusercontent.com/onnx/models/main/"
-    "validated/vision/classification/synset.txt"
+    "https://raw.githubusercontent.com/onnx/models/main/validated/vision/classification/synset.txt"
 )
 EXPECTED_LINES = 1000
 
 # Ảnh mẫu trên Wikimedia Commons (giấy phép tự do). Tên file lưu -> URL.
 DEMO_IMAGES: dict[str, str] = {
-    "cat.jpg": (
-        "https://upload.wikimedia.org/wikipedia/commons/3/3a/Cat03.jpg"
-    ),
+    "cat.jpg": ("https://upload.wikimedia.org/wikipedia/commons/3/3a/Cat03.jpg"),
     "dog.jpg": (
-        "https://upload.wikimedia.org/wikipedia/commons/2/26/"
-        "YellowLabradorLooking_new.jpg"
+        "https://upload.wikimedia.org/wikipedia/commons/2/26/YellowLabradorLooking_new.jpg"
     ),
 }
 
