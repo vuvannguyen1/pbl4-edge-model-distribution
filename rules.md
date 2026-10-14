@@ -1,7 +1,7 @@
 # Quy tắc phát triển hệ thống
 
 ## 1. Ngôn ngữ và nền tảng
-
+da
 - Ngôn ngữ được sử dụng trong toàn bộ hệ thống là **Python**.
 - Code mới phải tương thích với phiên bản Python đã được dự án quy định trong cấu hình hoặc tài liệu khởi chạy.
 - Không tự ý bổ sung ngôn ngữ lập trình, framework hoặc runtime khác nếu chưa có yêu cầu rõ ràng.
