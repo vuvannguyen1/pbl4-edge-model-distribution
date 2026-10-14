@@ -295,6 +295,15 @@ def create_app(settings: Settings | None = None, selector: ModelSelector | None 
         req = parse_model(FeedbackRequest, await read_json(request))
         return _json(service.feedback(req))
 
+    @app.post("/api/user-feedback")
+    async def user_feedback_endpoint(request: Request) -> JSONResponse:
+        from server.user_feedback_handler import record_user_feedback
+        data = await read_json(request)
+        if not isinstance(data, dict):
+            raise bad_request("Nội dung phải là một đối tượng JSON.")
+        res = record_user_feedback(data)
+        return JSONResponse(res)
+
     return app
 
 
