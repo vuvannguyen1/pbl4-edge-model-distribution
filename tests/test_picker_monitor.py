@@ -108,6 +108,28 @@ def test_monitor_reports_only_state_changes() -> None:
     assert monitor.connected
 
 
+def test_monitor_calls_on_reconnect_and_survives_errors() -> None:
+    states = iter([False, True, False, True])
+    calls: list[int] = []
+    lines: list[str] = []
+
+    def on_reconnect() -> None:
+        calls.append(1)
+        if len(calls) == 2:
+            raise RuntimeError("gửi bù lỗi")
+
+    monitor = ServerMonitor(
+        "http://10.0.0.1:8000",
+        out=lines.append,
+        check=lambda: next(states),
+        on_reconnect=on_reconnect,
+    )
+    for _ in range(4):
+        monitor.poll()
+    assert len(calls) == 2
+    assert any("gửi bù lỗi" in line for line in lines)
+
+
 def test_server_reachable() -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.bind(("127.0.0.1", 0))

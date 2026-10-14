@@ -1,4 +1,4 @@
-"""9 file mẫu trong docs/examples/ phải hợp lệ theo $defs tương ứng của schema."""
+"""Các file mẫu trong docs/examples/ phải hợp lệ theo $defs tương ứng của schema."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import pytest
 from validate_examples import EXAMPLE_DEFS, example_files, schema_errors
 
 
-def test_all_nine_examples_present() -> None:
+def test_all_examples_present() -> None:
     prefixes = {path.name[:2] for path, _ in example_files()}
     assert prefixes == set(EXAMPLE_DEFS)
 

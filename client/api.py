@@ -124,6 +124,45 @@ def build_feedback(
     }
 
 
+def build_manual_feedback(
+    *,
+    feedback_id: str,
+    device_id: str,
+    variant_id: str,
+    rating: int,
+    correct: bool,
+    prediction: str | None,
+    confidence: float | None,
+    expected_label: str | None,
+    comment: str | None,
+    request_id: str | None,
+    detected_at: str | None,
+    created_at: str,
+) -> dict[str, Any]:
+    """Đánh giá người dùng nhập bằng `client.feedback_cli` (gửi cùng `/api/feedback`)."""
+
+    def text(value: str | None) -> str | None:
+        value = value.strip() if value is not None else None
+        return value or None
+
+    return {
+        "feedback_id": feedback_id,
+        "device_id": device_id,
+        "variant_id": variant_id,
+        "rating": int(rating),
+        "correct": bool(correct),
+        "prediction": text(prediction),
+        "confidence": (
+            round(min(1.0, max(0.0, confidence)), 4) if confidence is not None else None
+        ),
+        "expected_label": text(expected_label),
+        "comment": text(comment),
+        "request_id": text(request_id),
+        "detected_at": text(detected_at),
+        "created_at": created_at,
+    }
+
+
 # ---------------------------------------------------------------- HTTP
 
 
@@ -147,9 +186,12 @@ def normalize_server_url(url: str) -> str:
 
 
 class ApiClient:
-    def __init__(self, server_url: str, timeout: float = 30.0) -> None:
+    def __init__(
+        self, server_url: str, timeout: float = 30.0, connect_timeout: float = 5.0
+    ) -> None:
         self.server_url = normalize_server_url(server_url)
-        self.timeout = timeout
+        # chờ mở kết nối ngắn: server tắt thì sớm chuyển sang offline
+        self.timeout = (min(connect_timeout, timeout), timeout)
         self.session = new_session()
 
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -186,6 +228,10 @@ class ApiClient:
         return self._post("/api/have", payload)
 
     def feedback(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._post("/api/feedback", payload)
+
+    def submit_feedback(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Gửi đánh giá thủ công (`build_manual_feedback`), cùng endpoint `/api/feedback`."""
         return self._post("/api/feedback", payload)
 
     def probe(self, size_kb: int = 256) -> tuple[int, float]:

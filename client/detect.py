@@ -9,9 +9,11 @@ Chạy:
 Bỏ `--image`: mở hộp thoại chọn ảnh trên máy, nhận diện, rồi hỏi tiếp ảnh khác
 (model chỉ nạp một lần) đến khi bấm Cancel.
 
-Model lấy từ kho cục bộ `data/client/<device_id>/` do `client.agent` đã tải:
-kiểm SHA-256 toàn file trước khi dùng, nạp một lần rồi chạy cho mọi ảnh.
+Model lấy từ kho cục bộ `data/client/<device_id>/` do `client.agent` đã tải: chỉ
+dùng model `complete`, kiểm kích thước và SHA-256 toàn file trước khi dùng (sai thì
+đánh `invalid`), nạp một lần rồi chạy cho mọi ảnh.
 Chọn model: `--variant` -> model đang dùng (active.json) -> top-1 cao nhất.
+Kết quả ảnh cuối được ghi lại để `python -m client.feedback_cli` gửi đánh giá.
 
 Mã thoát: 0 mọi ảnh thành công, 1 có lỗi.
 """
@@ -19,6 +21,7 @@ Mã thoát: 0 mọi ảnh thành công, 1 có lỗi.
 from __future__ import annotations
 
 import argparse
+import platform
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -26,8 +29,10 @@ from pathlib import Path
 from typing import Any
 
 from client.agent import DEFAULT_LABELS, REPO_ROOT
-from client.downloader import META_FILE, choose_local, load_active, verified_variants
+from client.device_info import runtime_string
+from client.feedback import save_last_detection
 from client.inference import Classifier, InferenceResult, format_top5, load_labels
+from client.model_cache import META_FILE, ModelCache
 from client.picker import pick_images
 
 CLIENT_DATA = REPO_ROOT / "data" / "client"
@@ -100,6 +105,7 @@ class LoadedModel:
     variant: dict[str, Any]
     model_path: Path
     classifier: Classifier
+    cache_dir: Path | None = None
 
 
 def open_model(
@@ -108,22 +114,29 @@ def open_model(
     labels_path: Path = DEFAULT_LABELS,
     out: Printer = print,
 ) -> LoadedModel:
-    """Chọn model hợp lệ trong cache và nạp vào ONNX Runtime (một lần)."""
+    """Chọn model `complete` trong cache và nạp vào ONNX Runtime (một lần)."""
     if not labels_path.is_file():
         raise DetectError(f"Thiếu file nhãn {labels_path}.")
-    found = verified_variants(cache_dir)
+    cache = ModelCache(cache_dir, runtime=runtime_string(), cpu_arch=platform.machine() or None)
     try:
-        variant, model_path, why = choose_local(found, variant_id, load_active(cache_dir))
+        variant, model_path, why = cache.find_local_model(variant_id)
     except LookupError as exc:
         raise DetectError(
             f"{exc} Cache: {cache_dir}. Hãy chạy client.agent một lần khi có kết nối server."
         ) from exc
 
-    classifier = Classifier(model_path, variant, load_labels(labels_path))
+    try:
+        classifier = Classifier(model_path, variant, load_labels(labels_path))
+    except Exception as exc:  # file đúng hash nhưng runtime không mở được
+        cache.mark_invalid(variant, f"ONNX Runtime không mở được: {exc}")
+        raise DetectError(
+            f"ONNX Runtime không mở được {variant['id']} ({type(exc).__name__}: {exc}); đã đánh "
+            "dấu invalid. Hãy chạy client.agent khi có kết nối server để tải lại."
+        ) from exc
     out(f"Model     : {variant['id']} ({why}), SHA-256 khớp")
     out(f"File      : {model_path}")
     out(f"Nạp model : {classifier.load_ms:.1f} ms (offline, không kết nối server)")
-    return LoadedModel(variant, model_path, classifier)
+    return LoadedModel(variant, model_path, classifier, cache_dir)
 
 
 def classify_images(
@@ -142,6 +155,14 @@ def classify_images(
         for line in format_top5(result.top5):
             out(line)
         results.append((image, result, None))
+        if model.cache_dir is not None and result.top5:
+            save_last_detection(
+                model.cache_dir,
+                variant_id=model.variant["id"],
+                image=image,
+                prediction=result.top5[0].label,
+                confidence=result.top5[0].probability,
+            )
     return results
 
 
@@ -233,6 +254,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     done = len(result.results) - result.failures
     print("")
     print(f"XONG: {done}/{len(result.results)} ảnh bằng {result.variant['id']}, chạy offline.")
+    if done:
+        print(
+            "Gửi đánh giá ảnh cuối: python -m client.feedback_cli "
+            f"--cache-dir {cache_dir} --variant-id {result.variant['id']}"
+        )
     return EXIT_OK if result.failures == 0 else EXIT_ERROR
 
 

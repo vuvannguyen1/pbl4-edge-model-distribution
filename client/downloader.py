@@ -12,15 +12,13 @@ Quy tắc (mục 8 của protocol):
   báo `complete: true`.
 - Miếng đã có sẵn đúng hash trong `.part` hoặc file cũ được dùng lại (tải tiếp).
 
-Kho cục bộ: mỗi variant một thư mục `<cache_dir>/<variant_id>/` (file model và
-`variant.json`), cộng `<cache_dir>/active.json` ghi variant đang dùng. Model nằm
-lại trên đĩa để `client.detect` chạy offline ở các lần sau.
+Kho cục bộ (file, metadata, trạng thái partial/complete/invalid) nằm ở
+`client/model_cache.py`; các hàm của kho vẫn import được từ module này.
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import threading
 import time
@@ -33,6 +31,17 @@ from typing import Any
 import requests
 
 from client.api import ApiClient, build_have, new_session
+from client.model_cache import (  # noqa: F401 - giữ đường import cũ
+    ACTIVE_FILE,
+    META_FILE,
+    choose_local,
+    load_active,
+    save_active,
+    save_variant_meta,
+    sha256_file,
+    variant_paths,
+    verified_variants,
+)
 
 MAX_PARALLEL = 4
 CHUNK_TIMEOUT_S = 10.0
@@ -40,8 +49,6 @@ MAX_ATTEMPTS = 3
 REPORT_EVERY = 4
 READ_BLOCK = 64 * 1024
 BYTES_PER_MB = 1024 * 1024
-META_FILE = "variant.json"  # khối variant lưu cạnh file model đã kiểm hash
-ACTIVE_FILE = "active.json"  # variant đang dùng, ở gốc cache_dir
 
 Logger = Callable[[str], None]
 
@@ -81,21 +88,6 @@ class DownloadResult:
     sources: dict[int, str] = field(default_factory=dict)
 
 
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as f:
-        while block := f.read(BYTES_PER_MB):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def variant_paths(cache_dir: Path, variant: dict[str, Any]) -> tuple[Path, Path]:
-    """(file hoàn chỉnh, file .part) trong cache_dir/<variant_id>/."""
-    folder = cache_dir / variant["id"]
-    final = folder / variant["file"]
-    return final, final.with_name(final.name + ".part")
-
-
 def describe_error(exc: Exception) -> str:
     """Mô tả lỗi mạng ngắn gọn cho console."""
     if isinstance(exc, requests.ConnectionError):
@@ -104,81 +96,6 @@ def describe_error(exc: Exception) -> str:
         return "quá 10 s không nhận được dữ liệu"
     text = str(exc)
     return f"{type(exc).__name__}: {text[:120]}{'…' if len(text) > 120 else ''}"
-
-
-def save_variant_meta(cache_dir: Path, variant: dict[str, Any]) -> None:
-    """Ghi khối variant cạnh file model, chỉ gọi sau khi SHA-256 toàn file khớp."""
-    final, _ = variant_paths(cache_dir, variant)
-    (final.parent / META_FILE).write_text(json.dumps(variant, ensure_ascii=False), encoding="utf-8")
-
-
-def verified_variants(cache_dir: Path) -> dict[str, tuple[dict[str, Any], Path]]:
-    """Kho cục bộ: variant đủ file và SHA-256 toàn file khớp -> (khối variant, file).
-
-    Khóa theo `variant_id` (thư mục riêng cho mỗi variant), không suy từ tên file.
-    """
-    found: dict[str, tuple[dict[str, Any], Path]] = {}
-    if not cache_dir.is_dir():
-        return found
-    for meta_path in sorted(cache_dir.glob(f"*/{META_FILE}")):
-        try:
-            variant = json.loads(meta_path.read_text(encoding="utf-8"))
-            final, _ = variant_paths(cache_dir, variant)
-            if meta_path.parent.name != variant["id"]:
-                continue
-            if (
-                final.is_file()
-                and final.stat().st_size == variant["size_bytes"]
-                and sha256_file(final) == variant["sha256"]
-            ):
-                found[variant["id"]] = (variant, final)
-        except (OSError, ValueError, KeyError, TypeError):
-            continue
-    return found
-
-
-def save_active(cache_dir: Path, variant_id: str) -> None:
-    """Ghi variant đang dùng, để lần chạy offline sau chọn đúng model này."""
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    (cache_dir / ACTIVE_FILE).write_text(json.dumps({"variant_id": variant_id}), encoding="utf-8")
-
-
-def load_active(cache_dir: Path) -> str | None:
-    """variant_id trong active.json, None nếu chưa có hoặc file hỏng."""
-    try:
-        data = json.loads((cache_dir / ACTIVE_FILE).read_text(encoding="utf-8"))
-        variant_id = data["variant_id"]
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
-    return variant_id if isinstance(variant_id, str) else None
-
-
-def choose_local(
-    found: dict[str, tuple[dict[str, Any], Path]],
-    requested: str | None = None,
-    active: str | None = None,
-) -> tuple[dict[str, Any], Path, str]:
-    """Chọn model trong kho cục bộ (kết quả của `verified_variants`).
-
-    Thứ tự: `requested` (bắt buộc phải có) -> `active` -> top-1 cao nhất, bằng nhau
-    thì file nhỏ hơn. Trả (khối variant, file, lý do chọn). Không có model nào phù
-    hợp thì ném LookupError.
-    """
-    if requested is not None:
-        if requested not in found:
-            have = ", ".join(sorted(found)) or "không có"
-            raise LookupError(f"Cache không có {requested} hợp lệ (đang có: {have}).")
-        variant, path = found[requested]
-        return variant, path, "theo yêu cầu"
-    if not found:
-        raise LookupError("Cache chưa có model nào hợp lệ.")
-    if active is not None and active in found:
-        variant, path = found[active]
-        return variant, path, "model đang dùng, ghi trong active.json"
-    variant, path = min(
-        found.values(), key=lambda vp: (-vp[0]["top1_accuracy"], vp[0]["size_bytes"], vp[0]["id"])
-    )
-    return variant, path, "top-1 cao nhất trong cache"
 
 
 def attempts_for(item: dict[str, Any], max_attempts: int = MAX_ATTEMPTS) -> list[tuple[str, str]]:
