@@ -204,10 +204,15 @@ class FeedbackQueue:
             tmp.write_text("".join(ln + "\n" for ln in out), encoding="utf-8")
             os.replace(tmp, self.path)
 
-    def sync(self, api: ApiClient, out: Printer = print) -> SyncReport:
-        """Gửi lần lượt các bản ghi `pending`. Lỗi mạng/5xx: dừng, giữ `pending` để thử lại."""
+    def sync(
+        self, api: ApiClient, out: Printer = print, only: set[str] | None = None
+    ) -> SyncReport:
+        """Gửi lần lượt các bản ghi `pending` (chỉ các feedback_id trong `only` nếu có).
+
+        Lỗi mạng/5xx: dừng, giữ `pending` để thử lại.
+        """
         report = SyncReport()
-        items = self.pending()
+        items = [r for r in self.pending() if only is None or r["feedback_id"] in only]
         for number, record in enumerate(items, start=1):
             payload = {key: record.get(key) for key in PAYLOAD_FIELDS}
             try:
