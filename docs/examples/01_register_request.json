@@ -1,0 +1,9 @@
+{
+  "protocol_version": "1.0",
+  "device_id": "phoneB",
+  "platform": "android",
+  "cpu_arch": "aarch64",
+  "ram_mb": 6144,
+  "runtime": "onnxruntime 1.25.1",
+  "peer_port": 9000
+}

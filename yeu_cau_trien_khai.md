@@ -190,7 +190,7 @@ Selector phải hoạt động với danh sách candidate lấy từ Registry, k
 
 Tận dụng giao thức đã chốt:
 
-- **Server:** ASP.NET Core REST API.
+- **Server:** Python + FastAPI, chạy bằng uvicorn.
 - **Client demo:** Python CLI và ONNX Runtime; client/browser khác là triển khai bổ sung nếu có thời gian.
 - **Peer service:** HTTP trên TCP, port mặc định `9000`.
 - **Model Store:** filesystem, nhóm theo tác vụ.
@@ -348,11 +348,11 @@ Mỗi biểu đồ phải có khoảng thời gian lọc; dữ liệu chưa đ�
 
 Để tận dụng giao thức đã thiết kế, khuyến nghị:
 
-- **Backend:** ASP.NET Core Web API.
+- **Backend:** FastAPI (V2), SQLAlchemy + Alembic cho SQL.
 - **Database:** SQL Server hoặc PostgreSQL; chọn một hệ quản trị làm chuẩn cho triển khai.
 - **Frontend:** React + TypeScript (hoặc framework web tương đương, chốt một stack).
 - **Model artifact storage:** filesystem/object storage; SQL lưu metadata, trạng thái và vị trí file.
-- **Background processing:** hosted service/worker trong ASP.NET Core ở giai đoạn đầu; tách worker riêng khi tải công việc tăng.
+- **Background processing:** background task/worker Python (FastAPI BackgroundTasks, sau này tách worker riêng)
 - **API docs:** OpenAPI/Swagger cho API quản trị.
 - **Validation:** dùng schema/version của Model Card và hợp đồng giao thức được kiểm soát trong repository.
 

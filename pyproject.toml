@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pbl4-edge-model-distribution"
+version = "1.0.0"
+description = "Phân phối model ONNX theo băng thông cho thiết bị edge (PBL4, Version 1)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "requests",
+    "onnxruntime",
+    "numpy",
+    "pillow",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "jsonschema",
+    "httpx",
+]
+
+[tool.setuptools]
+packages = ["server", "client"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    # starlette.testclient khuyên dùng httpx2; httpx vẫn chạy đúng
+    "ignore:Using `httpx` with `starlette.testclient`",
+]
+
+[tool.ruff]
+# Định dạng/kiểm tra: `ruff format` và `ruff check` (công cụ cài riêng, không phải dependency)
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]

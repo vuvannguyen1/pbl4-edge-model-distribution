@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "NO_VARIANT_FITS",
+    "message": "Không có phiên bản nào tải kịp trong 10 giây ở 500 kbps."
+  }
+}

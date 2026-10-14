@@ -1,0 +1,7 @@
+{
+  "protocol_version": "1.0",
+  "device_id": "phoneB",
+  "device_class": "android_arm64_4-8gb",
+  "chunk_size": 1048576,
+  "peer_enabled": true
+}

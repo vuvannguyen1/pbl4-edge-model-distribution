@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pbl4.local/protocol/1.0/protocol.schema.json",
+  "title": "PBL4 protocol 1.0",
+  "description": "Schema cho các tin nhắn JSON trong docs/protocol.md. Mỗi tin nhắn là một mục trong $defs.",
+  "$defs": {
+    "DeviceId": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,32}$"},
+    "VariantId": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"},
+    "Sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "Ratio": {"type": "number", "minimum": 0, "maximum": 1},
+    "NullableRatio": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "NullableNonNeg": {"type": ["number", "null"], "minimum": 0},
+
+    "RegisterRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol_version", "device_id", "platform", "cpu_arch", "ram_mb", "runtime", "peer_port"],
+      "properties": {
+        "protocol_version": {"const": "1.0"},
+        "device_id": {"$ref": "#/$defs/DeviceId"},
+        "platform": {"enum": ["android", "android_browser", "ios_browser", "windows", "linux"]},
+        "cpu_arch": {"type": "string", "minLength": 1},
+        "ram_mb": {"type": "integer", "minimum": 1},
+        "runtime": {"type": "string", "minLength": 1},
+        "peer_port": {"type": ["integer", "null"], "minimum": 1024, "maximum": 65535}
+      }
+    },
+    "RegisterResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol_version", "device_id", "device_class", "chunk_size", "peer_enabled"],
+      "properties": {
+        "protocol_version": {"const": "1.0"},
+        "device_id": {"$ref": "#/$defs/DeviceId"},
+        "device_class": {"type": "string", "pattern": "^[a-z_]+_(arm64|arm32|x64)_(lt4gb|4-8gb|gt8gb)$"},
+        "chunk_size": {"const": 1048576},
+        "peer_enabled": {"type": "boolean"}
+      }
+    },
+
+    "ModelRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["device_id", "task", "bandwidth_kbps", "deadline_s", "free_storage_mb", "preferred_variant", "have_variants"],
+      "properties": {
+        "device_id": {"$ref": "#/$defs/DeviceId"},
+        "task": {"const": "image_classification"},
+        "bandwidth_kbps": {"type": ["number", "null"], "exclusiveMinimum": 0},
+        "deadline_s": {"type": "number", "exclusiveMinimum": 0},
+        "free_storage_mb": {"$ref": "#/$defs/NullableNonNeg"},
+        "preferred_variant": {"anyOf": [{"$ref": "#/$defs/VariantId"}, {"type": "null"}]},
+        "have_variants": {"type": "array", "items": {"$ref": "#/$defs/VariantId"}, "uniqueItems": true}
+      }
+    },
+    "Variant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "file", "base_model", "level", "precision", "size_bytes", "sha256", "chunk_size", "chunk_count", "top1_accuracy", "input_shape", "input_dtype", "normalize"],
+      "properties": {
+        "id": {"$ref": "#/$defs/VariantId"},
+        "file": {"type": "string", "pattern": "\\.onnx$"},
+        "base_model": {"type": "string", "minLength": 1},
+        "level": {"type": "integer", "minimum": 0},
+        "precision": {"enum": ["fp32", "fp16", "int8"]},
+        "size_bytes": {"type": "integer", "minimum": 1},
+        "sha256": {"$ref": "#/$defs/Sha256"},
+        "chunk_size": {"const": 1048576},
+        "chunk_count": {"type": "integer", "minimum": 1},
+        "top1_accuracy": {"$ref": "#/$defs/Ratio"},
+        "input_shape": {"type": "array", "items": {"type": "integer", "minimum": 1}, "minItems": 1},
+        "input_dtype": {"enum": ["float", "uint8"]},
+        "normalize": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mean", "std"],
+          "properties": {
+            "mean": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+            "std": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 3, "maxItems": 3}
+          }
+        }
+      }
+    },
+    "PlanItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "offset", "size_bytes", "sha256", "source", "url", "fallback_url"],
+      "properties": {
+        "index": {"type": "integer", "minimum": 0},
+        "offset": {"type": "integer", "minimum": 0},
+        "size_bytes": {"type": "integer", "minimum": 1, "maximum": 1048576},
+        "sha256": {"$ref": "#/$defs/Sha256"},
+        "source": {"enum": ["server", "peer"]},
+        "url": {"type": "string", "pattern": "^http://"},
+        "fallback_url": {"type": ["string", "null"], "pattern": "^http://"}
+      },
+      "if": {"properties": {"source": {"const": "peer"}}},
+      "then": {"properties": {"fallback_url": {"type": "string"}}},
+      "else": {"properties": {"fallback_url": {"type": "null"}}}
+    },
+    "ModelResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_id", "variant", "reason", "estimated_download_s", "plan"],
+      "properties": {
+        "request_id": {"type": "string", "minLength": 1},
+        "variant": {"$ref": "#/$defs/Variant"},
+        "reason": {"type": "string"},
+        "estimated_download_s": {"$ref": "#/$defs/NullableNonNeg"},
+        "plan": {"type": "array", "items": {"$ref": "#/$defs/PlanItem"}}
+      }
+    },
+
+    "HaveRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["device_id", "request_id", "variant_id", "chunks", "complete", "bandwidth_kbps", "bad_chunks"],
+      "properties": {
+        "device_id": {"$ref": "#/$defs/DeviceId"},
+        "request_id": {"type": "string", "minLength": 1},
+        "variant_id": {"$ref": "#/$defs/VariantId"},
+        "chunks": {"type": "array", "items": {"type": "integer", "minimum": 0}, "uniqueItems": true},
+        "complete": {"type": "boolean"},
+        "bandwidth_kbps": {"type": ["number", "null"], "exclusiveMinimum": 0},
+        "bad_chunks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["index", "source_url"],
+            "properties": {
+              "index": {"type": "integer", "minimum": 0},
+              "source_url": {"type": "string", "pattern": "^http://"}
+            }
+          }
+        }
+      }
+    },
+    "HaveResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "action", "new_variant_id", "reason"],
+      "properties": {
+        "ok": {"const": true},
+        "action": {"enum": ["continue", "switch"]},
+        "new_variant_id": {"anyOf": [{"$ref": "#/$defs/VariantId"}, {"type": "null"}]},
+        "reason": {"type": ["string", "null"]}
+      },
+      "if": {"properties": {"action": {"const": "switch"}}},
+      "then": {"properties": {"new_variant_id": {"$ref": "#/$defs/VariantId"}, "reason": {"type": "string"}}},
+      "else": {"properties": {"new_variant_id": {"type": "null"}}}
+    },
+
+    "FeedbackRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["device_id", "request_id", "variant_id", "download_ms", "chunks_from_peer", "chunks_from_server", "load_ms", "latency_ms_median", "runs", "peak_ram_mb", "top1_label", "top1_confidence"],
+      "properties": {
+        "device_id": {"$ref": "#/$defs/DeviceId"},
+        "request_id": {"type": "string", "minLength": 1},
+        "variant_id": {"$ref": "#/$defs/VariantId"},
+        "download_ms": {"type": "number", "minimum": 0},
+        "chunks_from_peer": {"type": "integer", "minimum": 0},
+        "chunks_from_server": {"type": "integer", "minimum": 0},
+        "load_ms": {"type": "number", "minimum": 0},
+        "latency_ms_median": {"type": "number", "minimum": 0},
+        "runs": {"type": "integer", "minimum": 1},
+        "peak_ram_mb": {"$ref": "#/$defs/NullableNonNeg"},
+        "top1_label": {"type": ["string", "null"]},
+        "top1_confidence": {"$ref": "#/$defs/NullableRatio"}
+      }
+    },
+    "FeedbackResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "new_variant_id", "applies_to_class", "reason"],
+      "properties": {
+        "action": {"enum": ["keep", "switch"]},
+        "new_variant_id": {"anyOf": [{"$ref": "#/$defs/VariantId"}, {"type": "null"}]},
+        "applies_to_class": {"type": "string", "minLength": 1},
+        "reason": {"type": "string"}
+      },
+      "if": {"properties": {"action": {"const": "switch"}}},
+      "then": {"properties": {"new_variant_id": {"$ref": "#/$defs/VariantId"}}},
+      "else": {"properties": {"new_variant_id": {"type": "null"}}}
+    },
+
+    "Error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["error"],
+      "properties": {
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message"],
+          "properties": {
+            "code": {"enum": ["BAD_REQUEST", "UNKNOWN_DEVICE", "UNKNOWN_VARIANT", "CHUNK_OUT_OF_RANGE", "VERSION_MISMATCH", "NO_VARIANT_FITS", "INTERNAL"]},
+            "message": {"type": "string"}
+          }
+        }
+      }
+    }
+  }
+}
