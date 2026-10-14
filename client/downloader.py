@@ -11,6 +11,10 @@ Quy tắc (mục 8 của protocol):
 - Đủ miếng: kiểm SHA-256 toàn file; khớp mới đổi tên `.part` thành tên thật và
   báo `complete: true`.
 - Miếng đã có sẵn đúng hash trong `.part` hoặc file cũ được dùng lại (tải tiếp).
+
+Kho cục bộ: mỗi variant một thư mục `<cache_dir>/<variant_id>/` (file model và
+`variant.json`), cộng `<cache_dir>/active.json` ghi variant đang dùng. Model nằm
+lại trên đĩa để `client.detect` chạy offline ở các lần sau.
 """
 
 from __future__ import annotations
@@ -37,6 +41,7 @@ REPORT_EVERY = 4
 READ_BLOCK = 64 * 1024
 BYTES_PER_MB = 1024 * 1024
 META_FILE = "variant.json"  # khối variant lưu cạnh file model đã kiểm hash
+ACTIVE_FILE = "active.json"  # variant đang dùng, ở gốc cache_dir
 
 Logger = Callable[[str], None]
 
@@ -130,6 +135,50 @@ def verified_variants(cache_dir: Path) -> dict[str, tuple[dict[str, Any], Path]]
         except (OSError, ValueError, KeyError, TypeError):
             continue
     return found
+
+
+def save_active(cache_dir: Path, variant_id: str) -> None:
+    """Ghi variant đang dùng, để lần chạy offline sau chọn đúng model này."""
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    (cache_dir / ACTIVE_FILE).write_text(json.dumps({"variant_id": variant_id}), encoding="utf-8")
+
+
+def load_active(cache_dir: Path) -> str | None:
+    """variant_id trong active.json, None nếu chưa có hoặc file hỏng."""
+    try:
+        data = json.loads((cache_dir / ACTIVE_FILE).read_text(encoding="utf-8"))
+        variant_id = data["variant_id"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return variant_id if isinstance(variant_id, str) else None
+
+
+def choose_local(
+    found: dict[str, tuple[dict[str, Any], Path]],
+    requested: str | None = None,
+    active: str | None = None,
+) -> tuple[dict[str, Any], Path, str]:
+    """Chọn model trong kho cục bộ (kết quả của `verified_variants`).
+
+    Thứ tự: `requested` (bắt buộc phải có) -> `active` -> top-1 cao nhất, bằng nhau
+    thì file nhỏ hơn. Trả (khối variant, file, lý do chọn). Không có model nào phù
+    hợp thì ném LookupError.
+    """
+    if requested is not None:
+        if requested not in found:
+            have = ", ".join(sorted(found)) or "không có"
+            raise LookupError(f"Cache không có {requested} hợp lệ (đang có: {have}).")
+        variant, path = found[requested]
+        return variant, path, "theo yêu cầu"
+    if not found:
+        raise LookupError("Cache chưa có model nào hợp lệ.")
+    if active is not None and active in found:
+        variant, path = found[active]
+        return variant, path, "model đang dùng, ghi trong active.json"
+    variant, path = min(
+        found.values(), key=lambda vp: (-vp[0]["top1_accuracy"], vp[0]["size_bytes"], vp[0]["id"])
+    )
+    return variant, path, "top-1 cao nhất trong cache"
 
 
 def attempts_for(item: dict[str, Any], max_attempts: int = MAX_ATTEMPTS) -> list[tuple[str, str]]:
