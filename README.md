@@ -8,7 +8,9 @@ Hệ thống phân phối model AI (ONNX) cho thiết bị edge theo băng thôn
   cùng lớp và nhận feedback.
 - **Client agent** (Python CLI): đăng ký, đo băng thông, xin model, tải tối đa 4 miếng song
   song có kiểm SHA-256 và fallback, chạy phân loại ảnh bằng ONNX Runtime (Top-5), gửi số đo
-  thực tế; đồng thời làm peer chia sẻ miếng cho máy khác.
+  thực tế; đồng thời làm peer chia sẻ miếng cho máy khác. Model tải về nằm lại trên máy:
+  `python -m client.detect` mở hộp thoại chọn ảnh trên máy và nhận diện offline, không cần
+  server. Client báo trên terminal khi mất kết nối tới server.
 
 Hợp đồng giao thức: [docs/protocol.md](docs/protocol.md) và
 [docs/protocol.schema.json](docs/protocol.schema.json).
@@ -23,9 +25,14 @@ python tools\download_assets.py
 
 uvicorn server.main:app --host 0.0.0.0 --port 8000
 python -m client.agent --server http://localhost:8000 --device-id laptopA --image samples\dog.jpg
+
+rem các lần sau, không cần server (bỏ --image để chọn ảnh bằng hộp thoại):
+python -m client.detect
+python -m client.detect --image samples\dog.jpg samples\cat.jpg
 ```
 
-Hướng dẫn demo đầy đủ (các mức băng thông, P2P, fallback, hotspot, đọc log, lỗi hay gặp):
+Hướng dẫn demo đầy đủ (các mức băng thông, P2P, fallback, nhận diện offline, hotspot, đọc log,
+lỗi hay gặp):
 **[docs/run_demo.md](docs/run_demo.md)**.
 
 Kiểm thử: `python -m pytest -q`.
@@ -186,7 +193,7 @@ Client sẽ tự đăng ký thông số thiết bị qua `/api/register`, xin mo
 | Thư mục | Nội dung |
 |---|---|
 | `server/` | FastAPI app, Registry, Selector, Planner, token bucket, feedback |
-| `client/` | Agent CLI, downloader, inference, peer service |
+| `client/` | Agent CLI, detect offline, chọn ảnh, theo dõi server, downloader, inference, peer |
 | `registry/`, `metadata/model_cards/`, `models/` | Registry sinh tự động, Model Card, file `.onnx` (không commit) |
 | `tools/` | Tải model, sinh Registry, tải nhãn/ảnh, kiểm file mẫu giao thức |
 | `docs/` | Giao thức, schema, gói mẫu, hướng dẫn demo, báo cáo triển khai |
