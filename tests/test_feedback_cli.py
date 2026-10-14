@@ -278,3 +278,103 @@ def test_cli_sync_pending_keeps_when_server_down(tmp_path: Path) -> None:
     assert code == 1
     assert statuses(FeedbackQueue(cache)) == [STATUS_PENDING]
     assert "giữ nguyên 1" in lines[-1]
+
+
+# ---------------------------------------------------------------- Enter để thoát
+
+
+def _detected(cache: Path) -> None:
+    save_last_detection(
+        cache,
+        variant_id="mobilenetv2_int8",
+        image=Path("cat.jpg"),
+        prediction="tiger cat",
+        confidence=0.6,
+    )
+
+
+def test_cli_empty_rating_exits_without_saving(tmp_path: Path) -> None:
+    cache = tmp_path / "phoneA"
+    _detected(cache)
+    lines: list[str] = []
+    ask = answers("")
+    code = main(
+        ["--cache-dir", str(cache), "--server", closed_port_url()], ask=ask, out=lines.append
+    )
+    assert code == 0
+    assert len(ask.prompts) == 1  # type: ignore[attr-defined]
+    assert FeedbackQueue(cache).records() == []
+    assert "không được lưu" in lines[-1]
+
+
+def test_cli_empty_yes_no_exits_without_saving(tmp_path: Path) -> None:
+    cache = tmp_path / "phoneA"
+    _detected(cache)
+    lines: list[str] = []
+    ask = answers("4", "   ")
+    code = main(
+        ["--cache-dir", str(cache), "--server", closed_port_url()], ask=ask, out=lines.append
+    )
+    assert code == 0
+    assert len(ask.prompts) == 2  # type: ignore[attr-defined]
+    assert FeedbackQueue(cache).records() == []
+
+
+def test_cli_empty_label_and_comment_still_skip(tmp_path: Path) -> None:
+    """Enter ở nhãn thực tế/nhận xét vẫn là bỏ qua, không thoát."""
+    cache = tmp_path / "phoneA"
+    _detected(cache)
+    code = main(
+        ["--cache-dir", str(cache), "--server", closed_port_url()],
+        ask=answers("3", "n", "", ""),
+        out=lambda _: None,
+    )
+    assert code == 0
+    [record] = FeedbackQueue(cache).records()
+    assert record["expected_label"] is None and record["comment"] is None
+
+
+# ---------------------------------------------------------------- hỏi gửi đánh giá lần trước
+
+
+def test_cli_asks_and_sends_only_previous_when_yes(tmp_path: Path, live_server) -> None:
+    cache = tmp_path / "phoneA"
+    _detected(cache)
+    old = FeedbackQueue(cache).add(payload(device_id="phoneA"))
+    server = live_server()
+    lines: list[str] = []
+    ask = answers("y")
+    code = main(["--cache-dir", str(cache), "--server", server.url], ask=ask, out=lines.append)
+    assert code == 0
+    assert ask.prompts == ["Gửi 1 đánh giá lần trước? (y/n): "]  # type: ignore[attr-defined]
+    [record] = FeedbackQueue(cache).records()  # không tạo đánh giá mới
+    assert record["feedback_id"] == old["feedback_id"] and record["status"] == STATUS_SENT
+    assert any("Kết quả đúng" in line for line in lines), "liệt kê đánh giá lần trước"
+
+
+def test_cli_no_keeps_previous_pending_and_sends_only_new(tmp_path: Path, live_server) -> None:
+    cache = tmp_path / "phoneA"
+    _detected(cache)
+    old = FeedbackQueue(cache).add(payload(device_id="phoneA"))
+    server = live_server()
+    code = main(
+        ["--cache-dir", str(cache), "--server", server.url],
+        ask=answers("x", "n", "2", "n", "cat", ""),
+        out=lambda _: None,
+    )
+    assert code == 0
+    by_id = {r["feedback_id"]: r for r in FeedbackQueue(cache).records()}
+    assert by_id.pop(old["feedback_id"])["status"] == STATUS_PENDING
+    [new] = by_id.values()
+    assert new["status"] == STATUS_SENT and new["rating"] == 2
+
+
+def test_cli_does_not_ask_about_previous_when_offline(tmp_path: Path) -> None:
+    cache = tmp_path / "phoneA"
+    _detected(cache)
+    FeedbackQueue(cache).add(payload(device_id="phoneA"))
+    ask = answers("5", "y", "")
+    code = main(["--cache-dir", str(cache), "--server", closed_port_url()], ask=ask, out=print)
+    assert code == 0
+    assert not any("lần trước?" in p for p in ask.prompts)  # type: ignore[attr-defined]
+    assert statuses(FeedbackQueue(cache)) == [STATUS_PENDING, STATUS_PENDING]

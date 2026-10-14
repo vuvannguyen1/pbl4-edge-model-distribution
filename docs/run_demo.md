@@ -213,7 +213,10 @@ rồi chạy `client.detect`.
 python -m client.feedback_cli --device-id laptopB --server http://127.0.0.1:8000
 ```
 
-CLI hỏi điểm 1-5, dự đoán của lần detect gần nhất có đúng không, nhãn thực tế và nhận xét. Đánh
+CLI hỏi điểm 1-5, dự đoán của lần detect gần nhất có đúng không, nhãn thực tế và nhận xét (Enter
+bỏ trống ở câu điểm hoặc đúng/sai là thoát, không lưu). Nếu còn đánh giá `pending` từ lần trước và
+server đang chạy, CLI hỏi `Gửi N đánh giá lần trước? (y/n)`: `y` chỉ gửi các đánh giá đó, `n` giữ
+chúng và nhập đánh giá mới. Đánh
 giá được ghi `pending` vào `data\client\laptopB\feedback_queue.jsonl` rồi gửi ngay nếu server
 chạy (server in `Feedback thủ công fb-... -> positive/negative ...`). Demo offline: tắt server,
 chạy lệnh trên (client báo giữ `pending`), bật lại server rồi chạy:

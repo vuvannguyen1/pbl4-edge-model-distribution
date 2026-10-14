@@ -116,6 +116,11 @@ python -m client.feedback_cli --device-id laptopB --server http://127.0.0.1:8000
 - CLI lấy model và dự đoán của **lần detect gần nhất** (`data\client\<device_id>\last_detect.json`),
   rồi hỏi: điểm (1-5), dự đoán có đúng không, nhãn thực tế (nếu biết), nhận xét. Có thể trả lời
   trước bằng `--variant-id`, `--rating 5 --correct yes --expected-label ... --comment ...`.
+- Ở câu hỏi điểm và câu hỏi đúng/sai, **nhấn Enter bỏ trống là thoát**: đánh giá không được lưu
+  vào hàng chờ. (Enter ở nhãn thực tế/nhận xét vẫn là bỏ qua câu đó.)
+- Server đã chạy lại mà còn đánh giá `pending` từ lần trước, CLI liệt kê chúng và hỏi
+  `Gửi N đánh giá lần trước? (y/n)`: `y` thì **chỉ gửi các đánh giá đó**, không phải đánh giá lại;
+  `n` thì giữ chúng `pending` và nhập đánh giá mới (chỉ gửi đánh giá mới).
 - Đánh giá được ghi `pending` vào `data\client\<device_id>\feedback_queue.jsonl` **trước**, rồi
   gửi `POST /api/feedback` nếu server đang chạy. Server trả kết quả đánh giá (`positive`/
   `neutral`/`negative`, thống kê của model); bản ghi chỉ thành `sent` khi server xác nhận.
