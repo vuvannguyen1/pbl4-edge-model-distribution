@@ -1,0 +1,14 @@
+{
+  "feedback_id": "fb-0001",
+  "device_id": "phoneA",
+  "variant_id": "mobilenetv2_int8",
+  "rating": 5,
+  "correct": true,
+  "prediction": "Labrador retriever",
+  "confidence": 0.82,
+  "expected_label": "Labrador retriever",
+  "comment": "Kết quả đúng",
+  "request_id": "r-0001",
+  "detected_at": "2026-10-13T23:59:30Z",
+  "created_at": "2026-10-14T00:00:00Z"
+}

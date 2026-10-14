@@ -185,15 +185,18 @@ python -m client.detect --image samples
   `client.agent` cũng mở hộp thoại chọn một ảnh khi bỏ `--image`.
 - Nạp model một lần rồi nhận diện mọi ảnh (truyền nhiều file, hoặc thư mục ảnh .jpg .jpeg .png
   .bmp .webp), in Top-5 và latency từng ảnh. Không gọi server.
-- Kiểm SHA-256 toàn file trước khi dùng; file bị sửa/hỏng thì từ chối và báo cần tải lại.
+- Chỉ dùng model `complete` trong `variant.json`; kiểm kích thước và SHA-256 toàn file trước khi
+  dùng; file bị sửa/hỏng thì đánh `invalid`, từ chối và báo cần tải lại.
 - Chọn model: `--variant <id>` nếu có, rồi model trong `active.json`, rồi model top-1 cao nhất
   trong cache.
 - Chọn cache: `--cache-dir`, rồi `--device-id`; bỏ trống thì dùng thư mục thiết bị duy nhất trong
   `data\client\` (có nhiều thì phải chọn bằng `--device-id`).
 
-`client.agent` cũng tự chuyển offline: nếu không kết nối được server mà cache đã có model hợp lệ,
-nó in `Chuyển sang chế độ offline`, chạy suy luận bằng model có sẵn và bỏ qua feedback
-(`HOÀN TẤT (offline): ...`). Cache chưa có model thì báo cần chạy lại khi có kết nối server.
+`client.agent` cũng ưu tiên model trên máy: kho đã có model `complete` đúng SHA-256 thì không
+gửi `/api/request` (in `Model có sẵn trên máy`), kể cả khi server đang chạy; `--refresh` buộc hỏi
+server. Không kết nối được server thì in `Chuyển sang chế độ offline`, chạy suy luận bằng model có
+sẵn và bỏ qua feedback tự động (`HOÀN TẤT (offline): ...`). Cache chưa có model thì báo chưa thể
+detect offline và cần chạy lại khi có kết nối server.
 
 Sau khi đăng ký, `client.agent` theo dõi kết nối tới server (thử mở kết nối TCP mỗi 3 s, không
 gửi request nên không sinh log phía server). Server đóng hoặc mạng bị ngắt thì client in
@@ -203,6 +206,23 @@ nhất khi chạy `--serve` (client chạy lâu). Mất kết nối giữa lúc 
 
 Demo: chạy `client.agent ... --serve` như mục 3, bấm Ctrl+C tắt server (client báo mất kết nối),
 rồi chạy `client.detect`.
+
+### Gửi đánh giá, kể cả khi server tắt
+
+```cmd
+python -m client.feedback_cli --device-id laptopB --server http://127.0.0.1:8000
+```
+
+CLI hỏi điểm 1-5, dự đoán của lần detect gần nhất có đúng không, nhãn thực tế và nhận xét. Đánh
+giá được ghi `pending` vào `data\client\laptopB\feedback_queue.jsonl` rồi gửi ngay nếu server
+chạy (server in `Feedback thủ công fb-... -> positive/negative ...`). Demo offline: tắt server,
+chạy lệnh trên (client báo giữ `pending`), bật lại server rồi chạy:
+
+```cmd
+python -m client.feedback_cli --sync-pending --server http://127.0.0.1:8000
+```
+
+Bản ghi chuyển `sent` sau khi server xác nhận; chạy lại lệnh không gửi trùng.
 
 ## 7. Chạy qua hotspot hoặc Wi-Fi
 

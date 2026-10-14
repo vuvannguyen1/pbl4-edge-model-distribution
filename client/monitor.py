@@ -2,7 +2,8 @@
 
 Mỗi `interval_s` giây thử mở kết nối TCP tới host:port của server (không gửi HTTP
 request nên không sinh log phía server, không tốn token giới hạn tốc độ). Chỉ in khi
-trạng thái đổi: mất kết nối, rồi kết nối lại.
+trạng thái đổi: mất kết nối, rồi kết nối lại. Khi kết nối lại thì gọi `on_reconnect`
+(agent dùng để gửi bù feedback còn `pending`).
 """
 
 from __future__ import annotations
@@ -35,11 +36,13 @@ class ServerMonitor:
         out: Printer = print,
         interval_s: float = 3.0,
         check: Callable[[], bool] | None = None,
+        on_reconnect: Callable[[], None] | None = None,
     ) -> None:
         self.server_url = server_url
         self.out = out
         self.interval_s = interval_s
         self.check = check or (lambda: server_reachable(server_url))
+        self.on_reconnect = on_reconnect
         self.connected = True  # chỉ bật sau khi vừa gọi server thành công
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -52,6 +55,11 @@ class ServerMonitor:
         now = time.strftime("%H:%M:%S")
         if ok:
             self.out(f"  [{now}] Đã kết nối lại server {self.server_url}")
+            if self.on_reconnect is not None:
+                try:
+                    self.on_reconnect()
+                except Exception as exc:  # luồng nền: không được chết vì lỗi gửi bù
+                    self.out(f"  [cảnh báo] Lỗi khi xử lý kết nối lại: {exc}")
         else:
             self.out(
                 f"  [{now}] MẤT KẾT NỐI tới server {self.server_url}: server đã đóng hoặc mạng "

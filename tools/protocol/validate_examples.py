@@ -1,4 +1,4 @@
-"""Kiểm tra 9 file mẫu trong docs/examples/ khớp docs/protocol.schema.json.
+"""Kiểm tra các file mẫu trong docs/examples/ khớp docs/protocol.schema.json.
 
 Chạy từ thư mục gốc repo:
     python tools/protocol/validate_examples.py
@@ -32,6 +32,8 @@ EXAMPLE_DEFS: dict[str, str] = {
     "07": "FeedbackRequest",
     "08": "FeedbackResponse",
     "09": "Error",
+    "10": "ManualFeedbackRequest",
+    "11": "ManualFeedbackResponse",
 }
 
 

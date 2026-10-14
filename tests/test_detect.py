@@ -262,6 +262,29 @@ def test_agent_saves_active_then_runs_offline_when_server_down(tmp_path: Path, l
     assert any("Chuyển sang chế độ offline" in line for line in lines)
 
 
+@requires_models
+def test_agent_refresh_falls_back_offline_when_server_down(tmp_path: Path) -> None:
+    """--refresh buộc hỏi server; server tắt thì vẫn detect bằng model complete có sẵn."""
+    cache = tmp_path / "cache"
+    install_real_model(cache, "mobilenetv2_int8")
+    lines: list[str] = []
+    result = Agent(
+        AgentConfig(
+            server=closed_port_url(),
+            device_id="offlineC",
+            image=make_test_image(tmp_path / "anh.jpg"),
+            peer_port=0,
+            cache_dir=cache,
+            runs=1,
+            refresh=True,
+        ),
+        out=lines.append,
+    ).run()
+    assert result.offline and result.variant["id"] == "mobilenetv2_int8"
+    assert any("Chuyển sang chế độ offline" in line for line in lines)
+    assert install_real_model(cache, "mobilenetv2_int8").is_file(), "offline không xóa model"
+
+
 def test_agent_offline_without_cache_fails_clearly(tmp_path: Path) -> None:
     config = AgentConfig(
         server=closed_port_url(),
@@ -270,5 +293,5 @@ def test_agent_offline_without_cache_fails_clearly(tmp_path: Path) -> None:
         peer_port=0,
         cache_dir=tmp_path / "cache_rong",
     )
-    with pytest.raises(AgentError, match="Hãy chạy lại khi có kết nối server"):
+    with pytest.raises(AgentError, match="chưa thể detect offline.*Hãy chạy lại khi có kết nối"):
         Agent(config, out=lambda _: None).run()

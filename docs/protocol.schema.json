@@ -183,6 +183,49 @@
       "then": {"properties": {"new_variant_id": {"$ref": "#/$defs/VariantId"}}},
       "else": {"properties": {"new_variant_id": {"type": "null"}}}
     },
+    "ManualFeedbackRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["feedback_id", "device_id", "variant_id", "rating", "correct", "prediction", "confidence", "expected_label", "comment", "request_id", "detected_at", "created_at"],
+      "properties": {
+        "feedback_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$"},
+        "device_id": {"$ref": "#/$defs/DeviceId"},
+        "variant_id": {"$ref": "#/$defs/VariantId"},
+        "rating": {"type": "integer", "minimum": 1, "maximum": 5},
+        "correct": {"type": "boolean"},
+        "prediction": {"type": ["string", "null"], "minLength": 1, "maxLength": 200},
+        "confidence": {"$ref": "#/$defs/NullableRatio"},
+        "expected_label": {"type": ["string", "null"], "minLength": 1, "maxLength": 200},
+        "comment": {"type": ["string", "null"], "minLength": 1, "maxLength": 1000},
+        "request_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 200},
+        "detected_at": {"type": ["string", "null"], "format": "date-time"},
+        "created_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "ManualFeedbackResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "feedback_id", "status", "received_at", "evaluation"],
+      "properties": {
+        "ok": {"const": true},
+        "feedback_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$"},
+        "status": {"enum": ["accepted", "duplicate"]},
+        "received_at": {"type": "string", "minLength": 1},
+        "evaluation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["verdict", "needs_review", "variant_feedback_count", "variant_correct_rate", "variant_avg_rating", "reason"],
+          "properties": {
+            "verdict": {"enum": ["positive", "neutral", "negative"]},
+            "needs_review": {"type": "boolean"},
+            "variant_feedback_count": {"type": "integer", "minimum": 1},
+            "variant_correct_rate": {"$ref": "#/$defs/Ratio"},
+            "variant_avg_rating": {"type": "number", "minimum": 1, "maximum": 5},
+            "reason": {"type": "string"}
+          }
+        }
+      }
+    },
 
     "Error": {
       "type": "object",

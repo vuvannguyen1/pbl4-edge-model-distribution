@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Literal
 
 from pydantic import (
@@ -200,6 +201,57 @@ class FeedbackResponse(_Outgoing):
         if self.action == "keep" and self.new_variant_id is not None:
             raise ValueError("keep phải có new_variant_id = null")
         return self
+
+
+# ---------------------------------------------------------------- Đánh giá thủ công
+
+FeedbackId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,64}$")]
+ShortText = Annotated[str, StringConstraints(min_length=1, max_length=200)]
+
+
+def _check_timestamp(value: str | None) -> str | None:
+    if value is not None:
+        try:
+            datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("phải là thời điểm ISO 8601") from exc
+    return value
+
+
+class ManualFeedbackRequest(_Incoming):
+    """Đánh giá người dùng nhập bằng `client.feedback_cli`; phân biệt nhờ `feedback_id`."""
+
+    feedback_id: FeedbackId
+    device_id: DeviceId
+    variant_id: VariantId
+    rating: int = Field(ge=1, le=5)
+    correct: bool
+    prediction: ShortText | None
+    confidence: NullableRatio
+    expected_label: ShortText | None
+    comment: Annotated[str, StringConstraints(min_length=1, max_length=1000)] | None
+    request_id: ShortText | None
+    detected_at: str | None
+    created_at: NonEmptyStr
+
+    _timestamps = field_validator("detected_at", "created_at")(_check_timestamp)
+
+
+class ManualEvaluation(_Outgoing):
+    verdict: Literal["positive", "neutral", "negative"]
+    needs_review: bool
+    variant_feedback_count: int = Field(ge=1)
+    variant_correct_rate: Ratio
+    variant_avg_rating: float = Field(ge=1, le=5)
+    reason: str
+
+
+class ManualFeedbackResponse(_Outgoing):
+    ok: Literal[True] = True
+    feedback_id: FeedbackId
+    status: Literal["accepted", "duplicate"]
+    received_at: NonEmptyStr
+    evaluation: ManualEvaluation
 
 
 # ---------------------------------------------------------------- Lỗi

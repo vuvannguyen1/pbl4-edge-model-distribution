@@ -60,8 +60,12 @@ python -m client.agent --server http://127.0.0.1:8000 --device-id laptopB --peer
   `--image samples\dog.jpg` (ảnh ở đâu cũng được).
 - Client chạy 7 bước: đăng ký, đo băng thông, xin model (server trả lý do chọn), tải từng miếng có
   kiểm SHA-256, nhận diện ảnh (Top-5), gửi feedback.
-- Model được **giữ lại trên máy** ở `data\client\<device_id>\<variant_id>\`, kèm
-  `data\client\<device_id>\active.json` ghi model đang dùng. Chạy lại cùng lệnh thì không tải lại.
+- Model được **giữ lại trên máy** ở `data\client\<device_id>\<variant_id>\` (file `.onnx` và
+  `variant.json` ghi kích thước, SHA-256, phiên bản, task, input, runtime và trạng thái
+  `partial`/`complete`/`invalid`), kèm `data\client\<device_id>\active.json` ghi model đang dùng.
+- Lần chạy sau, nếu kho đã có model `complete` đúng SHA-256 thì client **không gửi
+  `/api/request`**, nhận diện ngay bằng model đó. Model bị sửa/hỏng thì bị đánh `invalid` và được
+  tải lại khi có server. Thêm `--refresh` để buộc hỏi server (vd. kiểm tra bản mới).
 
 Tham số hay dùng:
 
@@ -71,6 +75,7 @@ Tham số hay dùng:
 | `--preferred-variant mobilenetv2_int8` | Xin đúng một model, bỏ qua Selector |
 | `--peer-port 9000 --serve` | Chia sẻ model cho máy khác (P2P) và **chạy liên tục** đến khi bấm Ctrl+C |
 | `--follow-switch` | Server bảo đổi sang model nhẹ hơn thì tự xin lại |
+| `--refresh` | Hỏi server dù máy đã có model hợp lệ |
 
 ### 4. Client khi NGẮT kết nối server: dùng model đã tải
 
@@ -92,13 +97,38 @@ python -m client.detect --device-id laptopB --image samples
 
 | Lúc server đóng | Client in ra |
 |---|---|
-| Trước khi chạy `client.agent` (không kết nối được) | `Chuyển sang chế độ offline`, nhận diện bằng model có sẵn, `HOÀN TẤT (offline)` (bỏ qua feedback) |
-| Khi client đang chạy `--serve` | `[giờ] MẤT KẾT NỐI tới server ...`; server mở lại thì `[giờ] Đã kết nối lại server ...` |
-| Giữa lúc đang tải hoặc gửi | `[MẤT KẾT NỐI] Không kết nối được server ...` rồi dừng |
+| Trước khi chạy `client.agent` (chờ mở kết nối tối đa 5 s) | `Chuyển sang chế độ offline`, nhận diện bằng model `complete` có sẵn, `HOÀN TẤT (offline)` (bỏ qua feedback tự động) |
+| Khi client đang chạy `--serve` | `[giờ] MẤT KẾT NỐI tới server ...`; server mở lại thì `[giờ] Đã kết nối lại server ...` và gửi bù đánh giá `pending` |
+| Giữa lúc xin/tải model | Chuyển sang offline nếu kho có model `complete` khác; không có thì dừng |
+| Sau khi đã nhận diện xong | Bỏ qua gửi số đo, vẫn `HOÀN TẤT` |
 
-Cache chưa có model mà không kết nối được server thì client báo cần chạy lại khi có kết nối.
+Cache chưa có model mà không kết nối được server thì client báo chưa thể detect offline vì chưa có
+model và cần chạy lại khi có kết nối. Server tắt không bao giờ làm xóa model trên máy.
 
-### 5. Tóm tắt
+### 5. Gửi đánh giá kết quả nhận diện
+
+Sau `client.agent` hoặc `client.detect`, người dùng tự gửi đánh giá bằng lệnh:
+
+```cmd
+python -m client.feedback_cli --device-id laptopB --server http://127.0.0.1:8000
+```
+
+- CLI lấy model và dự đoán của **lần detect gần nhất** (`data\client\<device_id>\last_detect.json`),
+  rồi hỏi: điểm (1-5), dự đoán có đúng không, nhãn thực tế (nếu biết), nhận xét. Có thể trả lời
+  trước bằng `--variant-id`, `--rating 5 --correct yes --expected-label ... --comment ...`.
+- Đánh giá được ghi `pending` vào `data\client\<device_id>\feedback_queue.jsonl` **trước**, rồi
+  gửi `POST /api/feedback` nếu server đang chạy. Server trả kết quả đánh giá (`positive`/
+  `neutral`/`negative`, thống kê của model); bản ghi chỉ thành `sent` khi server xác nhận.
+- Server tắt: giữ `pending`, không phải nhập lại. Gửi bù khi server mở lại:
+
+```cmd
+python -m client.feedback_cli --sync-pending --server http://127.0.0.1:8000
+```
+
+  (`client.agent` cũng tự gửi bù khi kết nối được server.) Mỗi đánh giá có `feedback_id` riêng nên
+  gửi lại nhiều lần server cũng chỉ ghi một lần (`data\feedback\manual-feedback-YYYYMMDD.jsonl`).
+
+### 6. Tóm tắt
 
 | Tình huống | Lệnh |
 |---|---|
@@ -106,6 +136,8 @@ Cache chưa có model mà không kết nối được server thì client báo c�
 | Có server, tải model lần đầu | `python -m client.agent --server http://<IP>:8000 --device-id laptopB --peer-port 0` |
 | Có server, chia sẻ model và chạy liên tục | `python -m client.agent --server http://<IP>:8000 --device-id laptopA --peer-port 9000 --serve` |
 | Không có server, nhận diện ảnh | `python -m client.detect --device-id laptopB` |
+| Gửi đánh giá lần detect gần nhất | `python -m client.feedback_cli --device-id laptopB --server http://<IP>:8000` |
+| Gửi bù đánh giá còn pending | `python -m client.feedback_cli --sync-pending --server http://<IP>:8000` |
 | Tải lại model từ đầu | `rmdir /s /q data\client\laptopB` rồi chạy lại `client.agent` |
 
 Hướng dẫn demo đầy đủ (các mức băng thông, P2P, fallback, nhận diện offline, hotspot, đọc log,

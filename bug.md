@@ -170,13 +170,13 @@ python -m client.feedback_cli --sync-pending --server http://<server-ip>:8000
 
 ## 7. Tiêu chí hoàn thành
 
-- [ ] Detect lần đầu: không có model local thì client xin model và lưu thành công.
-- [ ] Detect lần sau: có model hợp lệ thì không gửi request xin model.
-- [ ] Model hỏng hoặc hash sai thì bị từ chối và tải lại khi server sẵn sàng.
-- [ ] Server tắt nhưng client có model hợp lệ thì detect offline thành công.
-- [ ] Server tắt và client không có model thì trả thông báo dễ hiểu.
-- [ ] Lệnh feedback yêu cầu người dùng nhập đánh giá.
-- [ ] Server chạy: feedback được gửi trực tiếp và qua quy trình đánh giá.
-- [ ] Server tắt: feedback được lưu `pending`, không bị mất.
-- [ ] Server mở lại: feedback `pending` được gửi bù và chỉ đánh dấu `sent` sau khi xác nhận.
+- [x] Detect lần đầu: không có model local thì client xin model và lưu thành công.
+- [x] Detect lần sau: có model hợp lệ thì không gửi request xin model.
+- [x] Model hỏng hoặc hash sai thì bị từ chối và tải lại khi server sẵn sàng.
+- [x] Server tắt nhưng client có model hợp lệ thì detect offline thành công.
+- [x] Server tắt và client không có model thì trả thông báo dễ hiểu.
+- [x] Lệnh feedback yêu cầu người dùng nhập đánh giá.
+- [x] Server chạy: feedback được gửi trực tiếp và qua quy trình đánh giá.
+- [x] Server tắt: feedback được lưu `pending`, không bị mất.
+- [x] Server mở lại: feedback `pending` được gửi bù và chỉ đánh dấu `sent` sau khi xác nhận.
 

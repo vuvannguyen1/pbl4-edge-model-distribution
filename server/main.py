@@ -27,7 +27,13 @@ from server.config import PROTOCOL_VERSION, Settings
 from server.errors import ProtocolError, bad_request, error_body
 from server.ratelimit import TokenBucket
 from server.registry import Registry
-from server.schemas import FeedbackRequest, HaveRequest, ModelRequest, RegisterRequest
+from server.schemas import (
+    FeedbackRequest,
+    HaveRequest,
+    ManualFeedbackRequest,
+    ModelRequest,
+    RegisterRequest,
+)
 from server.selector import ModelSelector, default_selector
 from server.service import DistributionService
 
@@ -292,8 +298,11 @@ def create_app(settings: Settings | None = None, selector: ModelSelector | None 
 
     @app.post("/api/feedback")
     async def feedback(request: Request) -> JSONResponse:
-        req = parse_model(FeedbackRequest, await read_json(request))
-        return _json(service.feedback(req))
+        data = await read_json(request)
+        # có feedback_id: đánh giá thủ công từ client.feedback_cli; không có: số đo của agent
+        if isinstance(data, dict) and "feedback_id" in data:
+            return _json(service.manual_feedback(parse_model(ManualFeedbackRequest, data)))
+        return _json(service.feedback(parse_model(FeedbackRequest, data)))
 
     return app
 
