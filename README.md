@@ -15,25 +15,101 @@ Hệ thống phân phối model AI (ONNX) cho thiết bị edge theo băng thôn
 Hợp đồng giao thức: [docs/protocol.md](docs/protocol.md) và
 [docs/protocol.schema.json](docs/protocol.schema.json).
 
-## Chạy nhanh
+## Chạy chương trình
+
+Mọi lệnh chạy trong `cmd` tại thư mục gốc repo (Windows). Chạy `chcp 65001` trước nếu chữ tiếng
+Việt bị lỗi. Ví dụ dưới dùng server ở `http://127.0.0.1:8000`; chạy trên hai máy thì thay bằng IP
+LAN của máy server, ví dụ `http://192.168.137.1:8000` (xem [docs/run_demo.md](docs/run_demo.md)
+mục 7 về hotspot và firewall).
+
+### 1. Cài đặt (một lần)
 
 ```cmd
 pip install -e .[dev]
 python tools\download_models.py
 python tools\build_registry.py
 python tools\download_assets.py
-
-uvicorn server.main:app --host 0.0.0.0 --port 8000
-python -m client.agent --server http://localhost:8000 --device-id laptopA --image samples\dog.jpg
-
-rem các lần sau, không cần server (bỏ --image để chọn ảnh bằng hộp thoại):
-python -m client.detect
-python -m client.detect --image samples\dog.jpg samples\cat.jpg
 ```
 
+`build_registry.py` phải in `4 variant, 4 ready`. Máy chỉ chạy client thì chỉ cần thư mục
+`client/` và `samples/imagenet_synset.txt`, cài `pip install requests onnxruntime numpy pillow`.
+
+### 2. Server
+
+```cmd
+uvicorn server.main:app --host 0.0.0.0 --port 8000
+```
+
+Server in `Server sẵn sàng ... 4 variant ready` là xong. Muốn giả lập mạng chậm (để thấy server
+chọn model khác nhau và thấy lợi ích P2P), đặt giới hạn tốc độ trước khi chạy:
+
+```cmd
+set PBL4_RATE_LIMIT_KBPS=2000
+uvicorn server.main:app --host 0.0.0.0 --port 8000
+```
+
+Bấm **Ctrl+C** để tắt server. Server giữ trạng thái trong RAM, tắt rồi bật lại là trạng thái sạch.
+
+### 3. Client khi CÓ kết nối server: xin và tải model
+
+```cmd
+python -m client.agent --server http://127.0.0.1:8000 --device-id laptopB --peer-port 0
+```
+
+- Bỏ `--image` thì client mở **hộp thoại chọn ảnh** trên máy; hoặc truyền thẳng
+  `--image samples\dog.jpg` (ảnh ở đâu cũng được).
+- Client chạy 7 bước: đăng ký, đo băng thông, xin model (server trả lý do chọn), tải từng miếng có
+  kiểm SHA-256, nhận diện ảnh (Top-5), gửi feedback.
+- Model được **giữ lại trên máy** ở `data\client\<device_id>\<variant_id>\`, kèm
+  `data\client\<device_id>\active.json` ghi model đang dùng. Chạy lại cùng lệnh thì không tải lại.
+
+Tham số hay dùng:
+
+| Tham số | Ý nghĩa |
+|---|---|
+| `--bandwidth 2000` | Giả lập băng thông (kbps) thay vì đo bằng `/api/probe` |
+| `--preferred-variant mobilenetv2_int8` | Xin đúng một model, bỏ qua Selector |
+| `--peer-port 9000 --serve` | Chia sẻ model cho máy khác (P2P) và **chạy liên tục** đến khi bấm Ctrl+C |
+| `--follow-switch` | Server bảo đổi sang model nhẹ hơn thì tự xin lại |
+
+### 4. Client khi NGẮT kết nối server: dùng model đã tải
+
+Chỉ cần đã chạy `client.agent` thành công **một lần** khi có server. Sau đó, kể cả khi tắt máy bật
+lại hoặc server đã đóng:
+
+```cmd
+python -m client.detect --device-id laptopB
+python -m client.detect --device-id laptopB --image samples\dog.jpg samples\cat.jpg
+python -m client.detect --device-id laptopB --image samples
+```
+
+- Không gọi server. Kiểm SHA-256 model trước khi dùng, nạp model một lần rồi nhận diện mọi ảnh.
+- Bỏ `--image`: mở hộp thoại chọn ảnh (chọn được nhiều ảnh), nhận diện xong lại mở hộp thoại cho
+  ảnh tiếp theo; bấm **Cancel** để thoát.
+- Chỉ có một thiết bị trong `data\client\` thì bỏ được `--device-id`.
+
+`client.agent` cũng tự xử lý khi server đóng:
+
+| Lúc server đóng | Client in ra |
+|---|---|
+| Trước khi chạy `client.agent` (không kết nối được) | `Chuyển sang chế độ offline`, nhận diện bằng model có sẵn, `HOÀN TẤT (offline)` (bỏ qua feedback) |
+| Khi client đang chạy `--serve` | `[giờ] MẤT KẾT NỐI tới server ...`; server mở lại thì `[giờ] Đã kết nối lại server ...` |
+| Giữa lúc đang tải hoặc gửi | `[MẤT KẾT NỐI] Không kết nối được server ...` rồi dừng |
+
+Cache chưa có model mà không kết nối được server thì client báo cần chạy lại khi có kết nối.
+
+### 5. Tóm tắt
+
+| Tình huống | Lệnh |
+|---|---|
+| Bật server | `uvicorn server.main:app --host 0.0.0.0 --port 8000` |
+| Có server, tải model lần đầu | `python -m client.agent --server http://<IP>:8000 --device-id laptopB --peer-port 0` |
+| Có server, chia sẻ model và chạy liên tục | `python -m client.agent --server http://<IP>:8000 --device-id laptopA --peer-port 9000 --serve` |
+| Không có server, nhận diện ảnh | `python -m client.detect --device-id laptopB` |
+| Tải lại model từ đầu | `rmdir /s /q data\client\laptopB` rồi chạy lại `client.agent` |
+
 Hướng dẫn demo đầy đủ (các mức băng thông, P2P, fallback, nhận diện offline, hotspot, đọc log,
-lỗi hay gặp):
-**[docs/run_demo.md](docs/run_demo.md)**.
+lỗi hay gặp): **[docs/run_demo.md](docs/run_demo.md)**.
 
 Kiểm thử: `python -m pytest -q`.
 
