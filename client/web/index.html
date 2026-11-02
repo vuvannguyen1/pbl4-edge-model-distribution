@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PBL4 · Client nhận diện ảnh</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="shared/css/tokens.css" />
+    <link rel="stylesheet" href="shared/css/fonts.css" />
+    <link rel="stylesheet" href="shared/css/base.css" />
+    <link rel="stylesheet" href="static/css/client.css" />
+    <script type="module" src="static/js/client.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Bỏ qua, tới nội dung chính</a>
+    <header class="client-top">
+      <div class="client-top-inner">
+        <p class="brand">
+          <svg class="icon icon-lg" aria-hidden="true"><use href="shared/icons/sprite.svg#i-image"></use></svg>
+          <span>PBL4 Client</span>
+          <span class="tag mono" id="device-id">…</span>
+        </p>
+        <div class="row" id="conn" role="status" aria-atomic="true">
+          <span class="badge is-neutral">Đang kiểm tra server…</span>
+        </div>
+      </div>
+    </header>
+
+    <main id="main" class="client-main stack" tabindex="-1">
+      <section class="card" aria-labelledby="detect-title">
+        <div class="card-header">
+          <div>
+            <h1 id="detect-title">Nhận diện ảnh</h1>
+            <p>Máy có sẵn model thì nhận diện ngay; chưa có thì xin server và tải về.</p>
+          </div>
+        </div>
+        <form class="card-body stack" id="detect-form" novalidate>
+          <div class="dropzone" id="dropzone">
+            <input type="file" id="file" accept="image/*" class="sr-only" />
+            <img id="preview" alt="" hidden />
+            <div class="dropzone-text" id="dropzone-text">
+              <svg class="icon icon-lg" aria-hidden="true"><use href="shared/icons/sprite.svg#i-upload-simple"></use></svg>
+              <p><strong>Kéo thả ảnh vào đây</strong> hoặc</p>
+              <label for="file" class="btn btn-secondary">Chọn ảnh trên máy</label>
+              <p class="hint">JPG, PNG, BMP, WEBP · tối đa 15 MB</p>
+            </div>
+          </div>
+          <div class="field">
+            <label for="sample">Hoặc dùng ảnh mẫu</label>
+            <select id="sample" class="input">
+              <option value="">Không dùng</option>
+            </select>
+          </div>
+          <span class="field-error" id="image-error" aria-live="polite"></span>
+
+          <details class="disclosure">
+            <summary>
+              <svg class="icon" aria-hidden="true"><use href="shared/icons/sprite.svg#i-caret-right"></use></svg>
+              Tuỳ chọn khi xin model
+            </summary>
+            <div class="form-grid section-gap">
+              <div class="field">
+                <label for="bandwidth">Băng thông (kbps)</label>
+                <input id="bandwidth" class="input" type="number" min="1" step="any" inputmode="decimal" placeholder="tự đo" aria-describedby="bandwidth-hint bandwidth-error" />
+                <span class="hint" id="bandwidth-hint">Bỏ trống: đo bằng /api/probe</span>
+                <span class="field-error" id="bandwidth-error" aria-live="polite"></span>
+              </div>
+              <div class="field">
+                <label for="deadline">Hạn tải (giây)</label>
+                <input id="deadline" class="input" type="number" min="1" step="any" inputmode="decimal" value="60" aria-describedby="deadline-error" />
+                <span class="field-error" id="deadline-error" aria-live="polite"></span>
+              </div>
+              <div class="field">
+                <label for="preferred">Variant mong muốn</label>
+                <input id="preferred" class="input" placeholder="để server chọn" autocomplete="off" aria-describedby="preferred-hint" />
+                <span class="hint" id="preferred-hint">vd. mobilenetv2_int8</span>
+              </div>
+            </div>
+            <label class="row section-gap">
+              <input type="checkbox" id="refresh" />
+              Hỏi server dù máy đã có model (--refresh)
+            </label>
+          </details>
+
+          <div class="form-actions">
+            <button class="btn btn-primary btn-lg" type="submit" id="detect-btn">
+              <svg class="icon" aria-hidden="true"><use href="shared/icons/sprite.svg#i-magnifying-glass"></use></svg>
+              <span>Nhận diện</span>
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section class="card" id="progress-card" aria-labelledby="progress-title" hidden>
+        <div class="card-header">
+          <h2 id="progress-title">Tiến trình</h2>
+          <span id="job-status"></span>
+        </div>
+        <div class="card-body stack" id="progress-body" aria-live="polite"></div>
+      </section>
+
+      <section class="card" id="result-card" aria-labelledby="result-title" hidden>
+        <div class="card-header"><h2 id="result-title">Kết quả</h2></div>
+        <div class="card-body" id="result-body"></div>
+      </section>
+
+      <section class="card" id="feedback-card" aria-labelledby="feedback-title">
+        <div class="card-header">
+          <div>
+            <h2 id="feedback-title">Đánh giá kết quả</h2>
+            <p>Đánh giá lần nhận diện gần nhất. Server tắt thì lưu chờ và tự gửi bù sau.</p>
+          </div>
+          <button class="btn btn-secondary btn-sm" type="button" id="sync-btn" hidden>
+            <svg class="icon" aria-hidden="true"><use href="shared/icons/sprite.svg#i-paper-plane-tilt"></use></svg>
+            <span>Gửi bù</span>
+          </button>
+        </div>
+        <div class="card-body stack" id="feedback-body"></div>
+      </section>
+
+      <section class="card" aria-labelledby="models-title">
+        <div class="card-header">
+          <div>
+            <h2 id="models-title">Model trên máy</h2>
+            <p id="sharing-text"></p>
+          </div>
+        </div>
+        <div class="card-body" id="models-body"></div>
+      </section>
+    </main>
+  </body>
+</html>

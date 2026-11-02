@@ -133,11 +133,56 @@ python -m client.feedback_cli --sync-pending --server http://127.0.0.1:8000
   (`client.agent` cũng tự gửi bù khi kết nối được server.) Mỗi đánh giá có `feedback_id` riêng nên
   gửi lại nhiều lần server cũng chỉ ghi một lần (`data\feedback\manual-feedback-YYYYMMDD.jsonl`).
 
-### 6. Tóm tắt
+### 6. Giao diện web
+
+Hai giao diện chỉ bọc các chức năng có sẵn, không thay đổi Protocol 1.0. Không cần cài thêm gì
+ngoài `pip install -e .[dev]`; font và icon đã nằm trong repo nên chạy được cả khi không có internet.
+
+**Dashboard server** (theo dõi toàn hệ thống). Bật server như mục 2 rồi mở trên trình duyệt:
+
+```text
+http://<IP máy server>:8000/      (tự chuyển tới /ui/)
+```
+
+| Màn hình | Bọc chức năng |
+|---|---|
+| Tổng quan | Số variant/thiết bị/peer/request, tỉ lệ chunk peer–server, cảnh báo, cấu hình server |
+| Thiết bị & P2P | Thiết bị đã đăng ký, lớp thiết bị, lần cuối liên lạc, đang chia sẻ peer hay không |
+| Registry model | `registry/model_registry.json` + Model Card, chi tiết từng chunk |
+| Quyết định chọn model | Lý do Selector chọn, từng bước lọc ứng viên; form **Xin model thử** (`POST /api/request`) |
+| Truyền model | Tiến độ từng lượt tải, lưới chunk theo nguồn server/peer, miếng lỗi |
+| Đánh giá model | Số đo agent, đánh giá người dùng (có form gửi `POST /api/feedback`), nhận xét văn bản |
+| Log sự kiện | Log server trong ngày, lọc theo mức và `request_id` |
+
+Dashboard tự cập nhật mỗi 2 giây (nút **Tạm dừng** trên cùng). Dữ liệu thiết bị và request nằm
+trong RAM của server nên khởi động lại server là mất; feedback và log thì còn (file trong `data/`).
+
+**Giao diện client** (thay cho `client.agent` + `client.feedback_cli` trên máy client):
+
+```cmd
+python -m client.web_ui --server http://<IP>:8000 --device-id laptopA --open
+```
+
+Mở `http://127.0.0.1:8080`: chọn/kéo thả ảnh hoặc ảnh mẫu, bấm **Nhận diện** (máy có model thì dùng
+ngay, chưa có thì xin server và tải, mất server thì chạy offline), xem tiến trình 7 bước và lưới
+miếng, Top-5, rồi gửi đánh giá (server tắt thì lưu chờ, có nút **Gửi bù**).
+
+| Tham số | Ý nghĩa |
+|---|---|
+| `--port 8081` | Đổi cổng giao diện (mặc định 8080) |
+| `--peer-port 9000` | Chia sẻ model đã tải cho máy khác (P2P), như `client.agent --serve` |
+| `--host 0.0.0.0` | Cho máy khác mở giao diện này (mặc định chỉ máy client) |
+| `--cache-dir`, `--runs` | Như `client.agent` |
+
+Trên Termux: chạy cùng lệnh rồi mở `http://127.0.0.1:8080` bằng trình duyệt của điện thoại.
+
+### 7. Tóm tắt
 
 | Tình huống | Lệnh |
 |---|---|
 | Bật server | `uvicorn server.main:app --host 0.0.0.0 --port 8000` |
+| Xem dashboard | Mở `http://<IP>:8000/` |
+| Giao diện web cho client | `python -m client.web_ui --server http://<IP>:8000 --device-id laptopB --open` |
 | Có server, tải model lần đầu | `python -m client.agent --server http://<IP>:8000 --device-id laptopB --peer-port 0` |
 | Có server, chia sẻ model và chạy liên tục | `python -m client.agent --server http://<IP>:8000 --device-id laptopA --peer-port 9000 --serve` |
 | Không có server, nhận diện ảnh | `python -m client.detect --device-id laptopB` |
@@ -305,8 +350,10 @@ Client sẽ tự đăng ký thông số thiết bị qua `/api/register`, xin mo
 
 | Thư mục | Nội dung |
 |---|---|
-| `server/` | FastAPI app, Registry, Selector, Planner, token bucket, feedback |
-| `client/` | Agent CLI, detect offline, chọn ảnh, theo dõi server, downloader, inference, peer |
+| `server/` | FastAPI app, Registry, Selector, Planner, token bucket, feedback; `admin_api.py` + `static/` là dashboard `/ui` |
+| `client/` | Agent CLI, detect offline, chọn ảnh, theo dõi server, downloader, inference, peer; `web_ui.py` + `web/` là giao diện web client |
+| `client/web/shared/` | CSS, font, icon, JS dùng chung cho cả hai giao diện web (xem `docs/design-system.md`) |
+| `design-system/` | Kết quả gốc của skill ui-ux-pro-max |
 | `registry/`, `metadata/model_cards/`, `models/` | Registry sinh tự động, Model Card, file `.onnx` (không commit) |
 | `tools/` | Tải model, sinh Registry, tải nhãn/ảnh, kiểm file mẫu giao thức |
 | `docs/` | Giao thức, schema, gói mẫu, hướng dẫn demo, báo cáo triển khai |
