@@ -209,6 +209,19 @@ def create_app(settings: Settings | None = None, selector: ModelSelector | None 
     app.state.service = service
     app.state.bucket = bucket
 
+    # Khởi tạo CSDL SQL và đồng bộ Registry ban đầu
+    try:
+        from server.db import get_session_factory, init_db, sync_registry_to_db
+        init_db()
+        with get_session_factory()() as db_session:
+            sync_registry_to_db(
+                db_session,
+                settings.registry_path,
+                settings.registry_path.parent.parent / "metadata" / "model_cards",
+            )
+    except Exception as exc:
+        logger.debug("Khởi tạo CSDL hoặc đồng bộ: %s", exc)
+
     ready = registry.ready_variants()
     logger.info(
         "Server sẵn sàng: protocol %s, %d variant ready (%s), selector %s, giới hạn tốc độ %s, "
@@ -312,6 +325,120 @@ def create_app(settings: Settings | None = None, selector: ModelSelector | None 
             raise bad_request("Nội dung phải là một đối tượng JSON.")
         res = record_user_feedback(data)
         return JSONResponse(res)
+
+    # ------------------------------------------------------------ Admin & MLOps API
+
+    @app.get("/admin-api/feedback-stats")
+    async def admin_feedback_stats() -> JSONResponse:
+        from server.db import get_feedback_statistics, get_session_factory
+        with get_session_factory()() as db_session:
+            return JSONResponse(get_feedback_statistics(db_session))
+
+    @app.get("/admin-api/models")
+    async def admin_list_models() -> JSONResponse:
+        from sqlalchemy import select
+        from sqlalchemy.orm import joinedload
+        from server.db import ModelVariantRecord, get_session_factory
+        with get_session_factory()() as db_session:
+            stmt = select(ModelVariantRecord).options(
+                joinedload(ModelVariantRecord.model),
+                joinedload(ModelVariantRecord.artifact),
+            )
+            variants = db_session.scalars(stmt).unique().all()
+            result = [
+                {
+                    "variant_id": v.variant_id,
+                    "model_id": v.model_id,
+                    "task_id": v.model.task_id if v.model else "",
+                    "family": v.model.family if v.model else "",
+                    "version": v.version,
+                    "precision": v.precision,
+                    "status": v.status,
+                    "top1_accuracy": v.top1_accuracy,
+                    "file": v.artifact.filename if v.artifact else "",
+                    "size_bytes": v.artifact.size_bytes if v.artifact else 0,
+                    "chunk_count": v.artifact.chunk_count if v.artifact else 0,
+                }
+                for v in variants
+            ]
+            return JSONResponse({"count": len(result), "variants": result})
+
+    @app.get("/admin-api/variants/{variant_id}")
+    async def admin_get_variant(variant_id: str) -> JSONResponse:
+        from server.db import ModelVariantRecord, get_session_factory
+        with get_session_factory()() as db_session:
+            v = db_session.get(ModelVariantRecord, variant_id)
+            if not v:
+                return _error_response("NOT_FOUND", f"Không tìm thấy variant {variant_id}", 404)
+            card = json.loads(v.model_card_json) if v.model_card_json else {}
+            return JSONResponse({
+                "variant_id": v.variant_id,
+                "model_id": v.model_id,
+                "version": v.version,
+                "precision": v.precision,
+                "status": v.status,
+                "top1_accuracy": v.top1_accuracy,
+                "artifact": {
+                    "filename": v.artifact.filename if v.artifact else "",
+                    "storage_path": v.artifact.storage_path if v.artifact else "",
+                    "size_bytes": v.artifact.size_bytes if v.artifact else 0,
+                    "sha256": v.artifact.sha256 if v.artifact else "",
+                    "chunk_count": v.artifact.chunk_count if v.artifact else 0,
+                } if v.artifact else None,
+                "model_card": card,
+            })
+
+    @app.post("/admin-api/variants/{variant_id}/status")
+    async def admin_set_variant_status(variant_id: str, request: Request) -> JSONResponse:
+        data = await read_json(request)
+        new_status = data.get("status")
+        valid_statuses = {"draft", "validating", "ready", "disabled", "retired"}
+        if new_status not in valid_statuses:
+            raise bad_request(f"Trạng thái không hợp lệ. Chọn một trong: {valid_statuses}")
+        from server.db import ModelVariantRecord, get_session_factory
+        with get_session_factory()() as db_session:
+            v = db_session.get(ModelVariantRecord, variant_id)
+            if not v:
+                return _error_response("NOT_FOUND", f"Không tìm thấy variant {variant_id}", 404)
+            v.status = new_status
+            db_session.commit()
+            return JSONResponse({"status": "success", "variant_id": variant_id, "new_status": new_status})
+
+    @app.post("/admin-api/models/upload")
+    async def admin_upload_model(request: Request) -> JSONResponse:
+        import base64
+        data = await read_json(request)
+        metadata = data.get("metadata", {})
+        filename = data.get("filename", "")
+        if "file_base64" in data:
+            model_bytes = base64.b64decode(data["file_base64"])
+        elif "file_path" in data:
+            src_path = Path(data["file_path"])
+            if not src_path.is_file():
+                raise bad_request(f"Không tìm thấy file nguồn tại {data['file_path']}")
+            model_bytes = src_path.read_bytes()
+            if not filename:
+                filename = src_path.name
+        else:
+            raise bad_request("Cần cung cấp 'file_path' hoặc 'file_base64'.")
+
+        if not filename:
+            filename = f"{metadata.get('variant_id', 'model')}.onnx"
+
+        from server.db import get_session_factory
+        from server.ingestion import IngestionError, ingest_model
+        try:
+            with get_session_factory()() as db_session:
+                res = ingest_model(
+                    model_bytes=model_bytes,
+                    filename=filename,
+                    metadata=metadata,
+                    settings=settings,
+                    session=db_session,
+                )
+                return JSONResponse(res)
+        except IngestionError as exc:
+            raise bad_request(exc.message) from exc
 
     return app
 

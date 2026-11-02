@@ -109,6 +109,23 @@ class DistributionService:
             device.ram_mb,
             device.runtime,
         )
+        try:
+            from server.db import get_session_factory, record_device as db_record_device
+            with get_session_factory()() as db_session:
+                db_record_device(
+                    session=db_session,
+                    device_id=device.device_id,
+                    device_class=device.device_class,
+                    platform=device.platform,
+                    cpu_arch=device.cpu_arch,
+                    ram_mb=device.ram_mb,
+                    runtime=device.runtime,
+                    peer_port=device.peer_port,
+                    peer_enabled=self.settings.peer_enabled,
+                    last_ip=device.ip,
+                )
+        except Exception as exc:
+            logger.debug("Không thể ghi device vào CSDL: %s", exc)
         return RegisterResponse(
             device_id=device.device_id,
             device_class=device.device_class,
@@ -227,6 +244,23 @@ class DistributionService:
             estimate,
             "rỗng, thiết bị đã có đủ" if already_have else summarize_plan(plan),
         )
+        try:
+            from server.db import get_session_factory, record_distribution_request as db_record_req
+            with get_session_factory()() as db_session:
+                db_record_req(
+                    session=db_session,
+                    request_id=rid,
+                    device_id=device.device_id,
+                    task_id=req.task,
+                    variant_id=variant.variant_id,
+                    selector_version=selector_version,
+                    bandwidth_kbps=bandwidth,
+                    deadline_s=req.deadline_s,
+                    free_storage_mb=req.free_storage_mb,
+                    reason=reason,
+                )
+        except Exception as exc:
+            logger.debug("[%s] Không thể ghi request vào CSDL: %s", rid, exc)
         return ModelResponse(
             request_id=rid,
             variant=variant.protocol_variant,
@@ -445,6 +479,27 @@ class DistributionService:
             decision.new_variant_id or "",
             path.name,
         )
+        try:
+            from server.db import get_session_factory, record_performance_feedback as db_record_perf
+            with get_session_factory()() as db_session:
+                db_record_perf(
+                    session=db_session,
+                    request_id=rid,
+                    device_id=req.device_id,
+                    variant_id=req.variant_id,
+                    device_class=device.device_class,
+                    download_ms=req.download_ms,
+                    load_ms=req.load_ms,
+                    latency_ms_median=req.latency_ms_median,
+                    runs=req.runs,
+                    peak_ram_mb=req.peak_ram_mb,
+                    chunks_from_server=req.chunks_from_server,
+                    chunks_from_peer=req.chunks_from_peer,
+                    action=decision.action,
+                    reason=decision.reason,
+                )
+        except Exception as exc:
+            logger.debug("[%s] Không thể lưu feedback vào CSDL: %s", rid, exc)
         return FeedbackResponse(
             action=decision.action,
             new_variant_id=decision.new_variant_id,
@@ -502,6 +557,25 @@ class DistributionService:
                 evaluation.reason,
                 path.name if path else "",
             )
+        try:
+            from server.db import get_session_factory, record_user_feedback as db_record_user
+            with get_session_factory()() as db_session:
+                db_record_user(
+                    session=db_session,
+                    device_id=req.device_id,
+                    variant_id=req.variant_id,
+                    feedback_text=req.comment or "",
+                    sentiment_score=req.rating,
+                    sentiment_label=evaluation.verdict,
+                    flag_for_retrain=(evaluation.verdict == "negative" or evaluation.needs_review),
+                    feedback_id=req.feedback_id,
+                    request_id=req.request_id,
+                    rating=req.rating,
+                    is_correct=req.correct,
+                    actual_label=req.expected_label,
+                )
+        except Exception as exc:
+            logger.debug("[%s] Không thể lưu manual feedback vào CSDL: %s", req.feedback_id, exc)
         return ManualFeedbackResponse(
             feedback_id=req.feedback_id,
             status="duplicate" if duplicate else "accepted",
