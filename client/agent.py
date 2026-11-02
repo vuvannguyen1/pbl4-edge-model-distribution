@@ -4,6 +4,18 @@ Chạy:
     python -m client.agent --server http://localhost:8000 --device-id laptopA ^
         --image samples\\dog.jpg
 
+Bỏ `--image` thì client mở hộp thoại để chọn ảnh trên máy.
+
+Trước khi gọi server, client tìm trong kho cục bộ (`client/model_cache.py`) một model
+`complete`, đúng task và SHA-256. Có thì nhận diện ngay bằng model đó, không xin model
+mới; chưa có (hoặc model hỏng) thì mới register -> request -> tải. `--refresh` buộc hỏi
+server dù đã có model; `--serve` cũng luôn hỏi để server ghi nhận máy này làm peer.
+
+Không kết nối được server (chờ mở kết nối tối đa 5 s): dùng model `complete` có sẵn,
+bỏ qua feedback tự động; chưa có model thì báo rõ là chưa detect offline được. Đánh
+giá của người dùng gửi bằng `python -m client.feedback_cli`; các đánh giá còn `pending`
+được gửi bù khi agent kết nối được server (cả khi server mở lại lúc đang `--serve`).
+
 Mã thoát: 0 thành công, 2 server báo NO_VARIANT_FITS, 1 lỗi khác.
 """
 
@@ -18,17 +30,24 @@ from pathlib import Path
 from typing import Any
 
 from client.api import ApiClient, ApiError, build_feedback, build_model_request, build_register
-from client.device_info import collect_device_info, default_device_id, sanitize_device_id
-from client.downloader import (
-    ChunkDownloader,
-    DownloadError,
-    DownloadResult,
-    SwitchRequested,
-    save_variant_meta,
+from client.device_info import (
+    DeviceInfo,
+    collect_device_info,
+    default_device_id,
+    sanitize_device_id,
+)
+from client.downloader import ChunkDownloader, DownloadError, DownloadResult, SwitchRequested
+from client.feedback import FeedbackQueue, save_last_detection
+from client.inference import Classifier, InferenceResult, format_top5, load_labels
+from client.model_cache import (  # noqa: F401 - verified_variants giữ đường import cũ
+    ModelCache,
+    ModelInvalid,
+    save_active,
     verified_variants,
 )
-from client.inference import InferenceResult, load_labels, run_inference
+from client.monitor import ServerMonitor, server_reachable
 from client.peer import PeerService, port_available
+from client.picker import pick_images
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_LABELS = REPO_ROOT / "samples" / "imagenet_synset.txt"
@@ -51,7 +70,7 @@ class AgentError(Exception):
 class AgentConfig:
     server: str
     device_id: str
-    image: Path
+    image: Path | None  # None: main() mở hộp thoại chọn ảnh trước khi chạy
     deadline_s: float = 60.0
     bandwidth_kbps: float | None = None
     preferred_variant: str | None = None
@@ -63,6 +82,7 @@ class AgentConfig:
     serve: bool = False
     labels: Path = DEFAULT_LABELS
     probe_kb: int = 256
+    refresh: bool = False  # True: hỏi server dù kho đã có model hợp lệ
 
     def resolved_cache_dir(self) -> Path:
         return self.cache_dir or (REPO_ROOT / "data" / "client" / self.device_id)
@@ -80,6 +100,8 @@ class AgentResult:
     feedback_payload: dict[str, Any]
     feedback: dict[str, Any]
     history: list[str] = field(default_factory=list)  # các variant đã xin, theo thứ tự
+    offline: bool = False  # True: không kết nối được server, dùng model trong cache
+    source: str = "server"  # "server": vừa xin model; "cache": dùng model có sẵn, không xin
 
 
 # ---------------------------------------------------------------- agent
@@ -95,16 +117,23 @@ class Agent:
         self.free_storage_mb: float | None = None
         self.peer_port = config.peer_port  # 0 nếu không chia sẻ được
         self.peer_service: PeerService | None = None
+        self.monitor: ServerMonitor | None = None
+        self.info: DeviceInfo | None = None
+        self.cache = ModelCache(self.cache_dir)  # step_device gắn runtime/cpu_arch hiện tại
+        self.queue = FeedbackQueue(self.cache_dir)
 
-    def section(self, step: int, title: str) -> None:
+    def section(self, step: int | None, title: str) -> None:
         self.out("")
-        self.out(f"══ [{step}/7] {title} " + "═" * max(3, 60 - len(title)))
+        prefix = f"[{step}/7] " if step is not None else ""
+        self.out(f"══ {prefix}{title} " + "═" * max(3, 60 - len(title)))
 
     # ------------------------------------------------------------ các bước
 
-    def step_register(self) -> None:
+    def step_device(self) -> DeviceInfo:
         cfg = self.config
         info = collect_device_info(self.cache_dir, cfg.platform)
+        self.info = info
+        self.cache = ModelCache(self.cache_dir, runtime=info.runtime, cpu_arch=info.cpu_arch)
         self.section(1, "Thông tin thiết bị")
         self.out(f"  device_id      : {cfg.device_id}")
         self.out(f"  platform       : {info.platform}")
@@ -125,7 +154,11 @@ class Agent:
             self.peer_port = 0
         self.out(f"  peer_port      : {self.peer_port or 'null (không chia sẻ)'}")
         self.free_storage_mb = info.free_storage_mb
+        return info
 
+    def step_register(self) -> None:
+        cfg = self.config
+        info = self.info or self.step_device()
         self.section(2, "Đăng ký với server (POST /api/register)")
         payload = build_register(
             device_id=cfg.device_id,
@@ -158,7 +191,7 @@ class Agent:
 
     def step_request(self, bandwidth: float | None, preferred: str | None) -> dict[str, Any]:
         cfg = self.config
-        local = verified_variants(self.cache_dir)
+        local = self.cache.valid_models()
         self.section(4, "Xin model (POST /api/request)")
         payload = build_model_request(
             device_id=cfg.device_id,
@@ -214,7 +247,7 @@ class Agent:
         variant = response["variant"]
         self.section(5, f"Tải model ({len(response['plan'])} miếng, tối đa 4 song song)")
         if not response["plan"]:
-            local = verified_variants(self.cache_dir).get(variant["id"])
+            local = self.cache.get(variant["id"])
             if local is None:
                 raise AgentError(
                     f"Server trả plan rỗng nhưng cache không có {variant['id']} hợp lệ. "
@@ -222,11 +255,17 @@ class Agent:
                 )
             self.out(f"  Đã có sẵn {local[1]} (SHA-256 khớp), không cần tải")
             return local[1], None
+        if self.cache.get(variant["id"]) is None:
+            self.cache.mark_partial(variant)  # file đang dùng được thì giữ complete
         downloader = ChunkDownloader(self.api, self.config.device_id, log=self.out)
         result = downloader.download(
             response["request_id"], variant, response["plan"], self.cache_dir
         )
-        save_variant_meta(self.cache_dir, variant)
+        try:
+            self.cache.complete(variant)
+        except ModelInvalid as exc:
+            raise AgentError(f"Model vừa tải không dùng được, đã đánh dấu invalid: {exc}") from exc
+        self.out(f"  Kho cục bộ: {variant['id']} complete (đủ file, SHA-256 khớp, runtime mở được)")
         self.out(
             f"  Tải xong: {result.chunks_from_server} miếng từ server, "
             f"{result.chunks_from_peer} từ peer, {result.chunks_reused} dùng lại, "
@@ -234,13 +273,38 @@ class Agent:
         )
         return result.path, result
 
-    def step_inference(self, model_path: Path, variant: dict[str, Any]) -> InferenceResult:
+    def step_inference(
+        self,
+        model_path: Path,
+        variant: dict[str, Any],
+        step: int | None = 6,
+        request_id: str | None = None,
+    ) -> InferenceResult:
         cfg = self.config
-        self.section(6, f"Chạy suy luận ONNX Runtime ({variant['id']})")
+        self.section(step, f"Chạy suy luận ONNX Runtime ({variant['id']})")
         if not cfg.labels.is_file():
             raise AgentError(f"Thiếu file nhãn {cfg.labels}. Chạy: python tools/download_assets.py")
+        if cfg.image is None:
+            raise AgentError("Chưa chọn ảnh để nhận diện.")
         labels = load_labels(cfg.labels)
-        result = run_inference(model_path, cfg.image, variant, labels, cfg.runs)
+        try:
+            classifier = Classifier(model_path, variant, labels)
+        except Exception as exc:  # file đúng hash nhưng runtime không mở được
+            self.cache.mark_invalid(variant, f"ONNX Runtime không mở được: {exc}")
+            raise AgentError(
+                f"ONNX Runtime không mở được {variant['id']}, đã đánh dấu invalid; lần chạy sau "
+                f"có server sẽ tải lại. Chi tiết: {type(exc).__name__}: {exc}"
+            ) from exc
+        result = classifier.classify(cfg.image, cfg.runs)
+        top1 = result.top5[0] if result.top5 else None
+        save_last_detection(
+            self.cache_dir,
+            variant_id=variant["id"],
+            image=cfg.image,
+            prediction=top1.label if top1 else None,
+            confidence=top1.probability if top1 else None,
+            request_id=request_id,
+        )
         self.out(f"  Ảnh            : {cfg.image}")
         self.out(f"  Input          : '{result.input_name}' {variant['input_shape']}")
         self.out(f"  Nạp model      : {result.load_ms:.1f} ms")
@@ -251,10 +315,8 @@ class Agent:
         ram = f"{result.peak_ram_mb:.1f} MB" if result.peak_ram_mb is not None else "không đo được"
         self.out(f"  RAM đỉnh       : {ram}")
         self.out("")
-        self.out("   #  Nhãn                              Xác suất")
-        self.out("  ──  ────────────────────────────────  ────────")
-        for rank, pred in enumerate(result.top5, start=1):
-            self.out(f"  {rank:>2}  {pred.label[:32]:<32}  {pred.probability * 100:7.2f} %")
+        for line in format_top5(result.top5):
+            self.out(line)
         return result
 
     def step_feedback(
@@ -285,7 +347,14 @@ class Agent:
             f"latency {payload['latency_ms_median']} ms, RAM {payload['peak_ram_mb']} MB, "
             f"top-1 {payload['top1_label']} ({payload['top1_confidence']})"
         )
-        feedback = self.api.feedback(payload)
+        try:
+            feedback = self.api.feedback(payload)
+        except ApiError as exc:
+            if exc.code != "CONNECTION":
+                raise
+            # đã nhận diện xong: mất server lúc này không làm hỏng kết quả detect
+            self.out(f"  [cảnh báo] Không gửi được số đo vì mất kết nối server: {exc.message}")
+            return payload, {}
         self.out(
             f"  Quyết định     : {feedback['action'].upper()}"
             + (f" → {feedback['new_variant_id']}" if feedback["new_variant_id"] else "")
@@ -327,6 +396,8 @@ class Agent:
             f"Đang phục vụ peer ở cổng {self.peer_service.port} "
             f"({', '.join(self.peer_service.shared_ids())}). Bấm Ctrl+C để dừng."
         )
+        if self.monitor is not None:
+            self.out(f"Đang theo dõi kết nối tới server {self.api.server_url}.")
         try:
             while True:
                 time.sleep(1)
@@ -338,11 +409,150 @@ class Agent:
             self.peer_service.stop()
             self.peer_service = None
 
+    # ------------------------------------------------------------ theo dõi server
+
+    def start_monitor(self) -> None:
+        if self.monitor is None:
+            self.monitor = ServerMonitor(
+                self.api.server_url, out=self.out, on_reconnect=self.sync_feedback
+            )
+            self.monitor.start()
+
+    def stop_monitor(self) -> None:
+        if self.monitor is not None:
+            self.monitor.stop()
+            self.monitor = None
+
+    def close(self) -> None:
+        """Dừng luồng theo dõi server và peer service."""
+        self.stop_monitor()
+        self.stop_peer_service()
+
+    # ------------------------------------------------------------ feedback người dùng
+
+    def sync_feedback(self) -> None:
+        """Gửi bù các đánh giá `pending` (nhập bằng client.feedback_cli khi server tắt)."""
+        pending = self.queue.pending()
+        if not pending:
+            return
+        self.out(f"  Gửi bù {len(pending)} đánh giá đang chờ (POST /api/feedback)...")
+        report = self.queue.sync(ApiClient(self.api.server_url), out=self.out)
+        self.out(
+            f"  Đã gửi {len(report.sent)}, server từ chối {len(report.rejected)}"
+            + (f", còn {report.remaining} pending ({report.error})" if report.error else "")
+        )
+
+    def feedback_hint(self, variant_id: str) -> None:
+        self.out("")
+        self.out(
+            "  Gửi đánh giá kết quả: python -m client.feedback_cli "
+            f"--device-id {self.config.device_id} --variant-id {variant_id} "
+            f"--server {self.api.server_url}"
+        )
+
+    # ------------------------------------------------------------ model có sẵn / offline
+
+    def find_local(self) -> tuple[dict[str, Any], Path, str] | None:
+        try:
+            return self.cache.find_local_model(self.config.preferred_variant)
+        except LookupError:
+            return None
+
+    def _local_result(
+        self, variant: dict[str, Any], path: Path, inference: InferenceResult, offline: bool
+    ) -> AgentResult:
+        return AgentResult(
+            device_class=self.device_class,
+            request_id="",
+            variant=variant,
+            model_path=path,
+            download_ms=0.0,
+            download=None,
+            inference=inference,
+            feedback_payload={},
+            feedback={},
+            history=[variant["id"]],
+            offline=offline,
+            source="cache",
+        )
+
+    def run_local(self, variant: dict[str, Any], path: Path, why: str) -> AgentResult:
+        """Kho đã có model hợp lệ: không xin model mới, nhận diện ngay bằng model này."""
+        online = server_reachable(self.api.server_url)
+        self.section(None, "Model có sẵn trên máy (không gửi /api/request)")
+        self.out(f"  Variant        : {variant['id']} ({why})")
+        self.out(
+            f"  Trạng thái     : complete, kích thước và SHA-256 khớp ({variant['sha256'][:16]}…)"
+        )
+        self.out(f"  File           : {path}")
+        if online:
+            self.out(f"  Server {self.api.server_url} đang chạy; thêm --refresh để hỏi bản mới")
+        else:
+            self.out(
+                f"  Không kết nối được server {self.api.server_url}: "
+                "Chuyển sang chế độ offline, dùng model này"
+            )
+        save_active(self.cache_dir, variant["id"])
+        inference = self.step_inference(path, variant, step=None)
+        if online:
+            try:
+                self.sync_feedback()
+            except Exception as exc:  # gửi bù là phụ, không làm hỏng kết quả detect
+                self.out(f"  [cảnh báo] Chưa gửi bù được đánh giá: {exc}")
+        self.feedback_hint(variant["id"])
+        return self._local_result(variant, path, inference, offline=not online)
+
+    def run_offline(self, error: ApiError) -> AgentResult:
+        """Không kết nối được server: chạy bằng model `complete` trong kho, không gửi feedback."""
+        self.out("")
+        self.out(f"  [cảnh báo] Không kết nối được server {self.api.server_url}")
+        try:
+            variant, path, why = self.cache.find_local_model(self.config.preferred_variant)
+        except LookupError as exc:
+            raise AgentError(
+                f"Không kết nối được server {self.api.server_url} và chưa thể detect offline vì "
+                f"máy chưa có model phù hợp. {exc} Hãy chạy lại khi có kết nối server để tải "
+                "model."
+            ) from error
+        self.out(f"  Chuyển sang chế độ offline: dùng {variant['id']} ({why}), SHA-256 khớp")
+        self.out(f"  File: {path}")
+        inference = self.step_inference(path, variant)
+        self.section(7, "Gửi phản hồi")
+        self.out("  Bỏ qua vì đang offline")
+        self.feedback_hint(variant["id"])
+        return self._local_result(variant, path, inference, offline=True)
+
     # ------------------------------------------------------------ luồng chính
 
     def run(self) -> AgentResult:
-        self.step_register()
-        bandwidth = self.step_bandwidth()
+        self.step_device()
+        if not (self.config.refresh or self.config.serve):
+            local = self.find_local()
+            if local is not None:
+                return self.run_local(*local)
+        try:
+            self.step_register()
+            self.start_monitor()
+            self.sync_feedback()
+            bandwidth = self.step_bandwidth()
+        except ApiError as exc:
+            if exc.code != "CONNECTION":
+                raise
+            self.stop_monitor()
+            return self.run_offline(exc)
+        try:
+            return self._run_online(bandwidth)
+        except ApiError as exc:
+            # server tắt trước khi kịp nhận diện (lỗi ở bước feedback đã được bỏ qua)
+            if exc.code != "CONNECTION":
+                raise
+            self.stop_monitor()
+            return self.run_offline(exc)
+        finally:
+            if not self.config.serve:  # --serve: tiếp tục theo dõi trong lúc phục vụ peer
+                self.stop_monitor()
+
+    def _run_online(self, bandwidth: float | None) -> AgentResult:
         preferred = self.config.preferred_variant
         switches_left = MAX_SWITCHES
         history: list[str] = []
@@ -361,12 +571,15 @@ class Agent:
                 preferred = switch.new_variant_id
                 continue
             download_ms = (time.perf_counter() - plan_received) * 1000
+            save_active(self.cache_dir, response["variant"]["id"])
             self.start_peer_service()
 
-            inference = self.step_inference(model_path, response["variant"])
+            inference = self.step_inference(
+                model_path, response["variant"], request_id=response["request_id"]
+            )
             payload, feedback = self.step_feedback(response, download_ms, download, inference)
 
-            if feedback["action"] == "switch" and feedback["new_variant_id"]:
+            if feedback.get("action") == "switch" and feedback["new_variant_id"]:
                 if self.config.follow_switch and switches_left > 0:
                     switches_left -= 1
                     preferred = feedback["new_variant_id"]
@@ -377,6 +590,7 @@ class Agent:
                         "  Gợi ý: chạy lại với --preferred-variant "
                         f"{feedback['new_variant_id']} hoặc thêm --follow-switch"
                     )
+            self.feedback_hint(response["variant"]["id"])
             return AgentResult(
                 device_class=self.device_class,
                 request_id=response["request_id"],
@@ -401,7 +615,9 @@ def parse_args(argv: Sequence[str] | None = None) -> AgentConfig:
     )
     parser.add_argument("--server", default="http://localhost:8000", help="URL server")
     parser.add_argument("--device-id", default=None, help="mặc định: tên máy đã lọc ký tự")
-    parser.add_argument("--image", required=True, type=Path, help="ảnh để chạy thử")
+    parser.add_argument(
+        "--image", type=Path, default=None, help="ảnh để chạy thử; bỏ trống thì mở hộp thoại chọn"
+    )
     parser.add_argument("--deadline", type=float, default=60.0, help="hạn tải (giây)")
     parser.add_argument(
         "--bandwidth", type=float, default=None, help="kbps; bỏ trống thì đo bằng /api/probe"
@@ -422,6 +638,11 @@ def parse_args(argv: Sequence[str] | None = None) -> AgentConfig:
         "--serve", action="store_true", help="giữ peer service chạy đến khi bấm Ctrl+C"
     )
     parser.add_argument("--labels", type=Path, default=DEFAULT_LABELS, help="file synset")
+    parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="hỏi server dù máy đã có model hợp lệ (mặc định dùng model có sẵn)",
+    )
     args = parser.parse_args(argv)
 
     if args.peer_port and not 1024 <= args.peer_port <= 65535:
@@ -449,6 +670,7 @@ def parse_args(argv: Sequence[str] | None = None) -> AgentConfig:
         follow_switch=args.follow_switch,
         serve=args.serve,
         labels=args.labels,
+        refresh=args.refresh,
     )
 
 
@@ -456,19 +678,38 @@ def main(argv: Sequence[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     config = parse_args(argv)
+    if config.image is None:
+        print("Chọn ảnh cần nhận diện trong hộp thoại...")
+        picked = pick_images(multiple=False)
+        if not picked:
+            print("[DỪNG] Chưa chọn ảnh.")
+            return EXIT_ERROR
+        config.image = picked[0]
     if not config.image.is_file():
         print(f"[LỖI] Không thấy ảnh {config.image}")
         return EXIT_ERROR
     agent = Agent(config)
     try:
         result = agent.run()
+        top1 = result.inference.top5[0]
         print("")
-        print(
-            f"HOÀN TẤT: {result.variant['id']} (request {result.request_id}), "
-            f"top-1 '{result.inference.top5[0].label}' "
-            f"{result.inference.top5[0].probability * 100:.1f} %, "
-            f"feedback {result.feedback['action']}"
-        )
+        if result.offline:
+            print(
+                f"HOÀN TẤT (offline): {result.variant['id']} trong cache, "
+                f"top-1 '{top1.label}' {top1.probability * 100:.1f} %"
+            )
+        elif result.source == "cache":
+            print(
+                f"HOÀN TẤT: {result.variant['id']} có sẵn trên máy (không xin model), "
+                f"top-1 '{top1.label}' {top1.probability * 100:.1f} %"
+            )
+        else:
+            decision = result.feedback.get("action", "chưa gửi được (mất kết nối)")
+            print(
+                f"HOÀN TẤT: {result.variant['id']} (request {result.request_id}), "
+                f"top-1 '{top1.label}' {top1.probability * 100:.1f} %, "
+                f"feedback {decision}"
+            )
         if config.serve:
             agent.serve_forever()
         return EXIT_OK
@@ -476,7 +717,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"\n[DỪNG] {exc}")
         return exc.exit_code
     except ApiError as exc:
-        print(f"\n[LỖI SERVER] {exc.code}: {exc.message}")
+        if exc.code == "CONNECTION":
+            print(
+                f"\n[MẤT KẾT NỐI] Không kết nối được server {agent.api.server_url}: server đã "
+                "đóng hoặc mạng bị ngắt giữa chừng."
+            )
+        else:
+            print(f"\n[LỖI SERVER] {exc.code}: {exc.message}")
         return EXIT_ERROR
     except DownloadError as exc:
         print(f"\n[LỖI TẢI] {exc}")
@@ -488,7 +735,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"\n[LỖI] {type(exc).__name__}: {exc}")
         return EXIT_ERROR
     finally:
-        agent.stop_peer_service()
+        agent.close()
 
 
 if __name__ == "__main__":

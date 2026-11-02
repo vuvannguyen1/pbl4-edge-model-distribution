@@ -1,0 +1,14 @@
+{
+  "ok": true,
+  "feedback_id": "fb-0001",
+  "status": "accepted",
+  "received_at": "2026-10-14T00:00:01.250+00:00",
+  "evaluation": {
+    "verdict": "positive",
+    "needs_review": false,
+    "variant_feedback_count": 3,
+    "variant_correct_rate": 0.6667,
+    "variant_avg_rating": 4.0,
+    "reason": "mobilenetv2_int8 có 3 đánh giá, đúng 67 %, trung bình 4.0 sao."
+  }
+}
