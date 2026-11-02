@@ -129,6 +129,52 @@ def test_only_one_detection_at_a_time(app: ClientWebApp) -> None:
     assert wait_done(first)["status"] == "done"
 
 
+# ---------------------------------------------------------------- danh sách model
+
+
+def _fake_models(app: ClientWebApp, rows: list[dict]) -> None:
+    app.models = lambda: rows  # type: ignore[method-assign]
+
+
+def test_variants_offline_only_local_complete(app: ClientWebApp) -> None:
+    _fake_models(
+        app,
+        [
+            {"variant_id": "mobilenetv2_int8", "status": "complete", "size_bytes": 3},
+            {"variant_id": "resnet50_int8", "status": "invalid", "size_bytes": 25},
+        ],
+    )
+    data = app.variants()
+    assert data["server_online"] is False
+    assert [v["variant_id"] for v in data["variants"]] == ["mobilenetv2_int8"]
+    assert data["variants"][0]["local_status"] == "complete"
+
+
+def test_variants_online_merges_server_registry(app: ClientWebApp, monkeypatch) -> None:
+    _fake_models(app, [{"variant_id": "mobilenetv2_int8", "status": "complete", "size_bytes": 3}])
+    app.server_online = lambda: True  # type: ignore[method-assign]
+
+    class Resp:
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict:
+            return {
+                "variants": [
+                    {"variant_id": "resnet50_fp32", "size_bytes": 98, "distributable": True},
+                    {"variant_id": "mobilenetv2_int8", "size_bytes": 3, "distributable": True},
+                    {"variant_id": "draft_one", "size_bytes": 1, "distributable": False},
+                ]
+            }
+
+    monkeypatch.setattr("client.web_ui.requests.get", lambda *a, **k: Resp())
+    data = app.variants()
+    ids = [v["variant_id"] for v in data["variants"]]
+    assert ids == ["mobilenetv2_int8", "resnet50_fp32"]  # bỏ bản chưa phân phối, sắp theo cỡ
+    assert data["variants"][0]["local_status"] == "complete"
+    assert data["variants"][1]["local_status"] is None and data["variants"][1]["on_server"]
+
+
 # ---------------------------------------------------------------- đánh giá
 
 

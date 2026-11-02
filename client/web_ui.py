@@ -28,6 +28,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
+import requests
+
 from client.agent import (
     DEFAULT_LABELS,
     REPO_ROOT,
@@ -252,6 +254,47 @@ class ClientWebApp:
                 "served": service.served if service else 0,
             },
         }
+
+    def variants(self) -> dict[str, Any]:
+        """Model cho ô "Model muốn dùng": Registry của server (nếu kết nối được) + kho trên máy.
+
+        Protocol 1.0 không có endpoint liệt kê variant nên đọc `/admin-api/variants` chỉ-đọc
+        của server. Mất server thì chỉ còn model `complete` trên máy (detect offline được).
+        """
+        local = {m["variant_id"]: m for m in self.models()}
+        rows: dict[str, dict[str, Any]] = {}
+        error = None
+        online = self.server_online()
+        if online:
+            try:
+                resp = requests.get(f"{self.server}/admin-api/variants", timeout=3)
+                resp.raise_for_status()
+                remote = resp.json().get("variants", [])
+            except (requests.RequestException, ValueError, AttributeError) as exc:
+                remote = []
+                error = f"Không đọc được danh sách model của server: {type(exc).__name__}"
+            for v in remote:
+                if v.get("distributable"):
+                    rows[v["variant_id"]] = {
+                        "variant_id": v["variant_id"],
+                        "precision": v.get("precision"),
+                        "size_bytes": v.get("size_bytes"),
+                        "top1_accuracy": v.get("top1_accuracy"),
+                        "on_server": True,
+                    }
+        for variant_id, m in local.items():
+            if variant_id not in rows and (online or m["status"] == "complete"):
+                rows[variant_id] = {
+                    "variant_id": variant_id,
+                    "precision": m.get("precision"),
+                    "size_bytes": m.get("size_bytes"),
+                    "top1_accuracy": m.get("top1_accuracy"),
+                    "on_server": False,
+                }
+        for variant_id, row in rows.items():
+            row["local_status"] = local.get(variant_id, {}).get("status")
+        ordered = sorted(rows.values(), key=lambda r: (r["size_bytes"] or 0, r["variant_id"]))
+        return {"server_online": online, "variants": ordered, "error": error}
 
     def samples(self) -> list[str]:
         if not SAMPLES_DIR.is_dir():
@@ -527,6 +570,8 @@ def make_handler(app: ClientWebApp) -> type[BaseHTTPRequestHandler]:
                     self._json(app.state())
                 elif path == "/api/samples":
                     self._json({"samples": app.samples()})
+                elif path == "/api/variants":
+                    self._json(app.variants())
                 elif path == "/api/feedback":
                     self._json({"records": app.feedback_history()})
                 elif path.startswith("/api/jobs/"):

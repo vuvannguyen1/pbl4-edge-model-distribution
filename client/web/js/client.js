@@ -73,14 +73,50 @@ function renderModels(s) {
   );
 }
 
+// Ô "Model muốn dùng": Registry server + model trên máy; giữ lựa chọn khi danh sách làm mới.
+async function loadVariants() {
+  const select = $("preferred");
+  let data;
+  try {
+    data = await api("/api/variants", { timeoutMs: 8000 });
+  } catch {
+    return;
+  }
+  const chosen = select.value;
+  const options = data.variants.map((v) => {
+    const parts = [v.variant_id, v.precision, v.size_bytes ? fmt.mb(v.size_bytes) : null, v.top1_accuracy ? `top-1 ${fmt.pct(v.top1_accuracy)}` : null];
+    let note = "";
+    if (v.local_status === "complete") note = " · đã có trên máy";
+    else if (v.local_status) note = ` · trên máy: ${v.local_status}, sẽ tải lại`;
+    else note = " · sẽ tải về";
+    if (!v.on_server) note += " (server không còn bản này)";
+    return h("option", { value: v.variant_id }, parts.filter(Boolean).join(" · ") + note);
+  });
+  const auto = data.server_online
+    ? "Để server tự chọn theo băng thông và thiết bị"
+    : "Tự chọn model tốt nhất đã có trên máy (đang offline)";
+  select.replaceChildren(h("option", { value: "" }, auto), ...options);
+  if ([...select.options].some((o) => o.value === chosen)) select.value = chosen;
+  $("preferred-hint").textContent = data.error
+    ? `${data.error}. Vẫn chọn được model đã có trên máy.`
+    : data.server_online
+      ? "Chọn sẵn một model: máy đã có thì dùng ngay, chưa có thì xin server đúng model đó và tải về (bỏ qua bộ chọn tự động)."
+      : "Đang mất kết nối server: chỉ chọn được model đã tải về máy.";
+}
+
 async function refreshState() {
   const s = await api("/api/state", { timeoutMs: 5000 });
   const firstTime = state === null;
   const lastChanged = JSON.stringify(state?.last_detection) !== JSON.stringify(s.last_detection);
+  const variantsChanged =
+    firstTime ||
+    state.server_online !== s.server_online ||
+    JSON.stringify(state.models) !== JSON.stringify(s.models);
   state = s;
   renderConn(s);
   renderModels(s);
   if (firstTime || lastChanged) renderFeedback();
+  if (variantsChanged) loadVariants();
 }
 
 const poller = new Poller({
@@ -322,6 +358,10 @@ function setupDetect() {
     if (sample) qs.set("sample", sample);
     else qs.set("name", chosenFile.name);
     for (const id of ["bandwidth", "deadline", "preferred"]) if ($(id).value.trim()) qs.set(id, $(id).value.trim());
+    if (!$("preferred").value && state && !state.server_online && !state.models.some((m) => m.status === "complete")) {
+      setImageError("Máy chưa có model nào và đang mất kết nối server: chưa nhận diện được.");
+      return;
+    }
     if ($("refresh").checked) qs.set("refresh", "1");
 
     btn.disabled = true;

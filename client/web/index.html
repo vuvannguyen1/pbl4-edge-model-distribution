@@ -53,6 +53,17 @@
           </div>
           <span class="field-error" id="image-error" aria-live="polite"></span>
 
+          <div class="field">
+            <label for="preferred">Model muốn dùng</label>
+            <select id="preferred" class="input" aria-describedby="preferred-hint">
+              <option value="">Để server tự chọn theo băng thông và thiết bị</option>
+            </select>
+            <span class="hint" id="preferred-hint">
+              Chọn sẵn một model: máy đã có thì dùng ngay, chưa có thì xin server đúng model đó và tải về
+              (bỏ qua bộ chọn tự động).
+            </span>
+          </div>
+
           <details class="disclosure">
             <summary>
               <svg class="icon" aria-hidden="true"><use href="shared/icons/sprite.svg#i-caret-right"></use></svg>
@@ -69,11 +80,6 @@
                 <label for="deadline">Hạn tải (giây)</label>
                 <input id="deadline" class="input" type="number" min="1" step="any" inputmode="decimal" value="60" aria-describedby="deadline-error" />
                 <span class="field-error" id="deadline-error" aria-live="polite"></span>
-              </div>
-              <div class="field">
-                <label for="preferred">Variant mong muốn</label>
-                <input id="preferred" class="input" placeholder="để server chọn" autocomplete="off" aria-describedby="preferred-hint" />
-                <span class="hint" id="preferred-hint">vd. mobilenetv2_int8</span>
               </div>
             </div>
             <label class="row section-gap">
