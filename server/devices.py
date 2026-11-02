@@ -70,6 +70,8 @@ class DeviceStore:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._devices: dict[str, Device] = {}
+        # device_id -> lần cuối gọi API (register/request/have/feedback), cho dashboard
+        self._last_seen: dict[str, str] = {}
 
     def register(
         self,
@@ -97,11 +99,24 @@ class DeviceStore:
         with self._lock:
             existed = device_id in self._devices
             self._devices[device_id] = device
+            self._last_seen[device_id] = device.registered_at
         return device, existed
 
     def get(self, device_id: str) -> Device | None:
         with self._lock:
             return self._devices.get(device_id)
+
+    def touch(self, device_id: str) -> None:
+        """Ghi nhận thiết bị đã đăng ký vừa liên lạc; bỏ qua device_id chưa đăng ký."""
+        with self._lock:
+            if device_id in self._devices:
+                self._last_seen[device_id] = datetime.now(timezone.utc).isoformat(
+                    timespec="seconds"
+                )
+
+    def last_seen(self, device_id: str) -> str | None:
+        with self._lock:
+            return self._last_seen.get(device_id)
 
     def all(self) -> list[Device]:
         with self._lock:

@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import itertools
 import threading
-from dataclasses import dataclass, field
+from collections.abc import Iterable
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
@@ -19,6 +20,10 @@ def url_origin(url: str) -> str:
     """`http://10.0.0.2:9000/chunks/x/0` -> `http://10.0.0.2:9000`."""
     parts = urlsplit(url)
     return f"{parts.scheme}://{parts.netloc}"
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 @dataclass
@@ -33,6 +38,17 @@ class DownloadRequest:
     created_at: str
     received: set[int] = field(default_factory=set)
     complete: bool = False
+    # Chỉ để dashboard quan sát (/admin-api); không ảnh hưởng luồng phân phối.
+    source: str = "client"  # "web": lượt "xin model thử" từ dashboard, không tải file
+    requested_bandwidth_kbps: float | None = None
+    bandwidth_kbps: float | None = None  # băng thông server dùng để chọn
+    deadline_s: float | None = None
+    estimated_download_s: float | None = None
+    decision_log: list[str] = field(default_factory=list)
+    updated_at: str = ""
+    completed_at: str | None = None
+    server_bandwidth_kbps: float | None = None  # client đo được khi tải từ server (/api/have)
+    bad_chunks: set[int] = field(default_factory=set)
 
 
 class StateStore:
@@ -64,10 +80,17 @@ class StateStore:
         reason: str,
         plan: list[PlanItem],
         complete: bool = False,
+        source: str = "client",
+        requested_bandwidth_kbps: float | None = None,
+        bandwidth_kbps: float | None = None,
+        deadline_s: float | None = None,
+        estimated_download_s: float | None = None,
+        decision_log: Iterable[str] = (),
     ) -> DownloadRequest:
         """Tạo request mới. `complete=True` khi thiết bị đã có đủ variant (plan rỗng)."""
         with self._lock:
             request_id = f"r-{next(self._counter):04d}"
+            now = utc_now()
             record = DownloadRequest(
                 request_id=request_id,
                 device_id=device_id,
@@ -76,9 +99,17 @@ class StateStore:
                 plan=list(plan),
                 selector_version=selector_version,
                 reason=reason,
-                created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                created_at=now,
                 received=set(range(chunk_count)) if complete else set(),
                 complete=complete,
+                source=source,
+                requested_bandwidth_kbps=requested_bandwidth_kbps,
+                bandwidth_kbps=bandwidth_kbps,
+                deadline_s=deadline_s,
+                estimated_download_s=estimated_download_s,
+                decision_log=list(decision_log),
+                updated_at=now,
+                completed_at=now if complete else None,
             )
             self._requests[request_id] = record
             return record
@@ -87,11 +118,23 @@ class StateStore:
         with self._lock:
             return self._requests.get(request_id)
 
-    def add_chunks(self, request_id: str, chunks: list[int]) -> tuple[int, int]:
+    def add_chunks(
+        self,
+        request_id: str,
+        chunks: list[int],
+        bad_chunks: Iterable[int] = (),
+        server_bandwidth_kbps: float | None = None,
+    ) -> tuple[int, int]:
         """Gộp chunk mới vào tiến độ. Trả (số chunk đã có, tổng số chunk)."""
         with self._lock:
             record = self._requests[request_id]
             record.received.update(chunks)
+            # miếng đã nhận đúng sau khi thử lại thì không còn tính là hỏng
+            record.bad_chunks.update(bad_chunks)
+            record.bad_chunks.difference_update(record.received)
+            if server_bandwidth_kbps:
+                record.server_bandwidth_kbps = server_bandwidth_kbps
+            record.updated_at = utc_now()
             return len(record.received), record.chunk_count
 
     def mark_complete(self, request_id: str) -> bool:
@@ -101,8 +144,39 @@ class StateStore:
             if len(record.received) < record.chunk_count:
                 return False
             record.complete = True
+            record.completed_at = record.completed_at or utc_now()
             self._complete.add((record.device_id, record.variant_id))
             return True
+
+    # ------------------------------------------------------------ snapshot cho dashboard
+
+    def requests_snapshot(self) -> list[DownloadRequest]:
+        """Bản sao các request (cũ trước); sửa bản sao không ảnh hưởng trạng thái thật."""
+        with self._lock:
+            return [
+                replace(
+                    r,
+                    plan=list(r.plan),
+                    received=set(r.received),
+                    decision_log=list(r.decision_log),
+                    bad_chunks=set(r.bad_chunks),
+                )
+                for r in self._requests.values()
+            ]
+
+    def complete_pairs(self) -> list[tuple[str, str]]:
+        """Các cặp (device_id, variant_id) đã báo complete và đủ chunk."""
+        with self._lock:
+            return sorted(self._complete)
+
+    def banned_origins(self) -> list[str]:
+        with self._lock:
+            return sorted(self._bad_origins)
+
+    def class_variants(self) -> dict[str, str]:
+        """device_class -> variant được ghi nhớ từ quyết định switch của feedback."""
+        with self._lock:
+            return dict(self._class_variant)
 
     # ------------------------------------------------------------ peer / have
 

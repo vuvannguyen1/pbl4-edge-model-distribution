@@ -129,8 +129,12 @@ class DistributionService:
             return requested
         return self.settings.rate_limit_kbps or None
 
-    def request_model(self, req: ModelRequest, base_url: str) -> ModelResponse:
+    def request_model(
+        self, req: ModelRequest, base_url: str, source: str = "client"
+    ) -> ModelResponse:
+        """`source="web"`: lượt "xin model thử" từ dashboard (chỉ lập plan, không tải)."""
         device = self._device(req.device_id)
+        self.devices.touch(device.device_id)
         self.registry.refresh_if_changed()
         bandwidth = self.effective_bandwidth(req.bandwidth_kbps)
         context = SelectionContext(
@@ -189,6 +193,12 @@ class DistributionService:
             reason=reason,
             plan=plan,
             complete=already_have,
+            source=source,
+            requested_bandwidth_kbps=req.bandwidth_kbps,
+            bandwidth_kbps=bandwidth,
+            deadline_s=req.deadline_s,
+            estimated_download_s=estimate,
+            decision_log=decision_log,
         )
         rid = record.request_id
         logger.info(
@@ -368,7 +378,13 @@ class DistributionService:
                     "[%s] Ngừng giao peer %s cho các plan sau", rid, url_origin(item.url)
                 )
 
-        have_count, total = self.state.add_chunks(rid, req.chunks)
+        self.devices.touch(req.device_id)
+        have_count, total = self.state.add_chunks(
+            rid,
+            req.chunks,
+            bad_chunks=[b.index for b in req.bad_chunks],
+            server_bandwidth_kbps=req.bandwidth_kbps,
+        )
         bandwidth = f"{fmt_num(req.bandwidth_kbps)} kbps" if req.bandwidth_kbps else "null"
         logger.info(
             "[%s] Tiến độ %s: +%d miếng %s, đã có %d/%d, băng thông server %s",
@@ -401,6 +417,7 @@ class DistributionService:
     def feedback(self, req: FeedbackRequest) -> FeedbackResponse:
         record = self._request_for(req.device_id, req.request_id, req.variant_id)
         device = self._device(req.device_id)
+        self.devices.touch(device.device_id)
         rid = record.request_id
         decision = decide(
             variant_id=req.variant_id,
@@ -457,6 +474,7 @@ class DistributionService:
         (client có thể gửi bù sau khi server khởi động lại). Trùng feedback_id thì không ghi.
         """
         device = self.devices.get(req.device_id)
+        self.devices.touch(req.device_id)
         now = datetime.now(timezone.utc)
         received_at = now.isoformat(timespec="milliseconds")
 

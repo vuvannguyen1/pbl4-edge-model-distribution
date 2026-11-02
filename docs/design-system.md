@@ -20,7 +20,7 @@
   (đúng quy tắc "retry once" của skill).
 
 **File này là quyết định cuối cùng và ghi đè `MASTER.md`** ở những điểm liệt kê tại mục 9.
-Mọi giá trị dưới đây đã có trong [`server/static/css/tokens.css`](../server/static/css/tokens.css).
+Mọi giá trị dưới đây đã có trong [`client/web/shared/css/tokens.css`](../client/web/shared/css/tokens.css).
 Component chỉ dùng biến (`var(--...)`), không viết mã màu trực tiếp.
 
 ## 2. Style

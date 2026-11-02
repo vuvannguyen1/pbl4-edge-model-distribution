@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PBL4 · Bảng điều khiển phân phối model</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="shared/css/tokens.css" />
+    <link rel="stylesheet" href="shared/css/fonts.css" />
+    <link rel="stylesheet" href="shared/css/base.css" />
+    <link rel="stylesheet" href="css/dashboard.css" />
+    <script type="module" src="js/app.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Bỏ qua, tới nội dung chính</a>
+
+    <div class="shell">
+      <header class="topbar">
+        <button
+          class="btn btn-ghost nav-toggle"
+          type="button"
+          aria-controls="sidebar"
+          aria-expanded="false"
+          id="nav-toggle"
+        >
+          <svg class="icon" aria-hidden="true"><use href="shared/icons/sprite.svg#i-list"></use></svg>
+          <span>Menu</span>
+        </button>
+        <a class="brand" href="#/">
+          <svg class="icon icon-lg" aria-hidden="true">
+            <use href="shared/icons/sprite.svg#i-share-network"></use>
+          </svg>
+          <span>PBL4 Edge</span>
+        </a>
+        <div class="live">
+          <span id="live-status" class="badge is-neutral" role="status" aria-atomic="true">
+            Đang kết nối…
+          </span>
+          <button class="btn btn-secondary btn-sm" type="button" id="live-toggle" aria-pressed="false">
+            <svg class="icon" aria-hidden="true"><use href="shared/icons/sprite.svg#i-pause"></use></svg>
+            <span>Tạm dừng</span>
+          </button>
+        </div>
+      </header>
+
+      <nav class="sidebar" id="sidebar" aria-label="Màn hình">
+        <ul>
+          <li><a href="#/" data-route="overview"><svg class="icon" aria-hidden="true"><use href="shared/icons/sprite.svg#i-gauge"></use></svg>Tổng quan</a></li>
+          <li><a href="#/devices" data-route="devices"><svg class="icon" aria-hidden="true"><use href="shared/icons/sprite.svg#i-devices"></use></svg>Thiết bị &amp; P2P</a></li>
+          <li><a href="#/models" data-route="models"><svg class="icon" aria-hidden="true"><use href="shared/icons/sprite.svg#i-stack"></use></svg>Registry model</a></li>
+          <li><a href="#/decisions" data-route="decisions"><svg class="icon" aria-hidden="true"><use href="shared/icons/sprite.svg#i-git-fork"></use></svg>Quyết định chọn model</a></li>
+          <li><a href="#/transfers" data-route="transfers"><svg class="icon" aria-hidden="true"><use href="shared/icons/sprite.svg#i-arrows-down-up"></use></svg>Truyền model</a></li>
+          <li><a href="#/feedback" data-route="feedback"><svg class="icon" aria-hidden="true"><use href="shared/icons/sprite.svg#i-chat-circle-text"></use></svg>Đánh giá model</a></li>
+          <li><a href="#/logs" data-route="logs"><svg class="icon" aria-hidden="true"><use href="shared/icons/sprite.svg#i-terminal-window"></use></svg>Log sự kiện</a></li>
+        </ul>
+        <p class="sidebar-note small muted">
+          Dữ liệu thiết bị và request nằm trong RAM của server: khởi động lại server là mất.
+        </p>
+      </nav>
+
+      <div class="content">
+        <div id="offline-banner" class="banner is-danger" role="alert" hidden>
+          <svg class="icon" aria-hidden="true"><use href="shared/icons/sprite.svg#i-cloud-slash"></use></svg>
+          <span id="offline-text">Mất kết nối server. Dữ liệu đang hiện là bản cũ.</span>
+        </div>
+        <main id="main" tabindex="-1">
+          <noscript>Trang này cần JavaScript để tải dữ liệu từ server.</noscript>
+        </main>
+      </div>
+    </div>
+  </body>
+</html>

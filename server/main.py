@@ -19,10 +19,12 @@ from typing import Any, TypeVar
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from server.admin_api import router as admin_router
 from server.config import PROTOCOL_VERSION, Settings
 from server.errors import ProtocolError, bad_request, error_body
 from server.ratelimit import TokenBucket
@@ -46,6 +48,13 @@ PROBE_MIN_KB = 16
 PROBE_MAX_KB = 1024
 PROBE_DEFAULT_KB = 256
 OCTET_STREAM = "application/octet-stream"
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+# CSS/JS/font/icon dùng chung với giao diện client; nằm trong client/ vì client phải
+# chạy độc lập (Termux chỉ có thư mục client/)
+SHARED_UI_DIR = Path(__file__).resolve().parent.parent / "client" / "web" / "shared"
+# Dashboard gửi header này khi "xin model thử": server ghi request là source="web"
+SOURCE_HEADER = "X-PBL4-Source"
+WEB_SOURCE = "web-ui"
 
 M = TypeVar("M", bound=BaseModel)
 
@@ -280,7 +289,8 @@ def create_app(settings: Settings | None = None, selector: ModelSelector | None 
     @app.post("/api/request")
     async def request_model(request: Request) -> JSONResponse:
         req = parse_model(ModelRequest, await read_json(request))
-        return _json(service.request_model(req, base_url_for(request, settings)))
+        source = "web" if request.headers.get(SOURCE_HEADER) == WEB_SOURCE else "client"
+        return _json(service.request_model(req, base_url_for(request, settings), source))
 
     @app.get("/api/chunks/{variant_id}/{index}")
     async def get_chunk(variant_id: str, index: int) -> StreamingResponse:
@@ -312,6 +322,17 @@ def create_app(settings: Settings | None = None, selector: ModelSelector | None 
             raise bad_request("Nội dung phải là một đối tượng JSON.")
         res = record_user_feedback(data)
         return JSONResponse(res)
+
+    # ------------------------------------------------------------ dashboard web
+
+    app.include_router(admin_router)
+    # /ui/shared phải mount trước /ui (Starlette khớp theo thứ tự)
+    app.mount("/ui/shared", StaticFiles(directory=SHARED_UI_DIR), name="ui-shared")
+    app.mount("/ui", StaticFiles(directory=STATIC_DIR, html=True), name="ui")
+
+    @app.get("/", include_in_schema=False)
+    async def root() -> RedirectResponse:
+        return RedirectResponse("/ui/")
 
     return app
 

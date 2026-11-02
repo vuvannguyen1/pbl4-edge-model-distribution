@@ -27,6 +27,11 @@ dev = [
 [tool.setuptools]
 packages = ["server", "client"]
 
+[tool.setuptools.package-data]
+# giao diện web: HTML/CSS/JS/font/icon tĩnh, không cần build
+server = ["static/**/*"]
+client = ["web/**/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = [
