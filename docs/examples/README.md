@@ -9,6 +9,7 @@ Kịch bản: `phoneB` (Android, 6 GB RAM) vào mạng sau `phoneA`. Hai máy c�
 | 05, 06 | Báo tiến độ: `POST /api/have` |
 | 07, 08 | Phản hồi: `POST /api/feedback` |
 | 09 | Lỗi |
+| 10, 11 | Đánh giá của người dùng: `POST /api/feedback` có `feedback_id` |
 
 Lưu ý:
 

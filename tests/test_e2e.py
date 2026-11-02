@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from conftest import make_test_image, requires_models
 from validate_examples import schema_errors
 
 from client.agent import Agent, AgentConfig, verified_variants
+from client.api import build_manual_feedback
 from client.downloader import sha256_file
+from client.feedback import FeedbackQueue, load_last_detection, new_feedback_id
 
 
 @requires_models
@@ -53,8 +56,13 @@ def test_agent_full_flow_mobilenetv2_int8(tmp_path: Path, live_server) -> None:
     assert "Nhãn" in output and "sha256 OK" in output
 
 
+def request_count(server) -> int:
+    logs = list(server.app.state.settings.logs_dir.glob("server-*.log"))
+    return sum(log.read_text(encoding="utf-8").count("Xin model:") for log in logs)
+
+
 @requires_models
-def test_second_run_uses_cached_file_with_empty_plan(tmp_path: Path, live_server) -> None:
+def test_second_run_uses_local_model_without_request(tmp_path: Path, live_server) -> None:
     server = live_server()
     image = make_test_image(tmp_path / "anh.jpg")
     config = AgentConfig(
@@ -67,11 +75,92 @@ def test_second_run_uses_cached_file_with_empty_plan(tmp_path: Path, live_server
         runs=2,
     )
     first = Agent(config, out=lambda _: None).run()
+    assert first.source == "server"
     assert "mobilenetv2_int8" in verified_variants(tmp_path / "cache")
+    assert request_count(server) == 1
+
+    lines: list[str] = []
+    second = Agent(config, out=lines.append).run()
+    assert second.source == "cache" and not second.offline
+    assert second.variant["id"] == "mobilenetv2_int8"
+    assert second.model_path == first.model_path
+    assert second.download is None and second.request_id == ""
+    assert len(second.inference.top5) == 5
+    assert request_count(server) == 1, "có model hợp lệ thì không gửi /api/request"
+    assert any("feedback_cli" in line for line in lines)
+
+    # --refresh: hỏi server, server đã ghi nhận complete nên plan rỗng, không tải lại
+    third = Agent(replace(config, refresh=True), out=lambda _: None).run()
+    assert third.source == "server" and third.request_id != first.request_id
+    assert third.download is None, "plan rỗng vì server đã ghi nhận complete"
+    assert third.feedback_payload["chunks_from_server"] == 0
+    assert request_count(server) == 2
+
+
+@requires_models
+def test_tampered_model_is_rejected_and_downloaded_again(tmp_path: Path, live_server) -> None:
+    server = live_server()
+    image = make_test_image(tmp_path / "anh.jpg")
+    cache = tmp_path / "cache"
+    config = AgentConfig(
+        server=server.url,
+        device_id="e2eE",
+        image=image,
+        bandwidth_kbps=600,
+        peer_port=0,
+        cache_dir=cache,
+        runs=2,
+    )
+    first = Agent(config, out=lambda _: None).run()
+    with first.model_path.open("r+b") as f:
+        f.seek(1000)
+        f.write(b"\xde\xad\xbe\xef")
+
     second = Agent(config, out=lambda _: None).run()
-    assert second.request_id != first.request_id
-    assert second.download is None, "plan rỗng vì server đã ghi nhận complete"
-    assert second.feedback_payload["chunks_from_server"] == 0
+    assert second.source == "server", "model hỏng thì phải xin lại"
+    assert second.download is not None
+    assert second.download.chunks_from_server >= 1
+    assert sha256_file(second.model_path) == second.variant["sha256"]
+    meta = json.loads((cache / "mobilenetv2_int8" / "variant.json").read_text(encoding="utf-8"))
+    assert meta["status"] == "complete"
+
+
+@requires_models
+def test_agent_sends_pending_feedback_when_server_back(tmp_path: Path, live_server) -> None:
+    cache = tmp_path / "cache"
+    queue = FeedbackQueue(cache)
+    record = queue.add(
+        build_manual_feedback(
+            feedback_id=new_feedback_id(),
+            device_id="e2eF",
+            variant_id="mobilenetv2_int8",
+            rating=4,
+            correct=True,
+            prediction="seashore",
+            confidence=0.2,
+            expected_label=None,
+            comment=None,
+            request_id=None,
+            detected_at=None,
+            created_at="2026-10-14T00:00:00Z",
+        )
+    )
+    server = live_server()
+    config = AgentConfig(
+        server=server.url,
+        device_id="e2eF",
+        image=make_test_image(tmp_path / "anh.jpg"),
+        bandwidth_kbps=600,
+        peer_port=0,
+        cache_dir=cache,
+        runs=2,
+    )
+    Agent(config, out=lambda _: None).run()
+    [stored] = queue.records()
+    assert stored["feedback_id"] == record["feedback_id"] and stored["status"] == "sent"
+    last = load_last_detection(cache)
+    assert last is not None and last["variant_id"] == "mobilenetv2_int8"
+    assert last["request_id"]
 
 
 @requires_models

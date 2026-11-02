@@ -14,7 +14,13 @@ from pathlib import Path
 from server.config import Settings
 from server.devices import Device, DeviceStore
 from server.errors import ProtocolError, bad_request, unknown_device, unknown_variant
-from server.feedback import FeedbackStore, decide
+from server.feedback import (
+    FeedbackStore,
+    ManualFeedbackStore,
+    VariantStats,
+    decide,
+    evaluate_manual,
+)
 from server.planner import PeerSource, build_plan, format_ranges, summarize_plan
 from server.registry import Registry, RegistryVariant
 from server.schemas import (
@@ -22,6 +28,9 @@ from server.schemas import (
     FeedbackResponse,
     HaveRequest,
     HaveResponse,
+    ManualEvaluation,
+    ManualFeedbackRequest,
+    ManualFeedbackResponse,
     ModelRequest,
     ModelResponse,
     PlanItem,
@@ -59,6 +68,7 @@ class DistributionService:
         devices: DeviceStore | None = None,
         state: StateStore | None = None,
         feedback_store: FeedbackStore | None = None,
+        manual_feedback_store: ManualFeedbackStore | None = None,
     ) -> None:
         self.settings = settings
         self.registry = registry
@@ -66,6 +76,9 @@ class DistributionService:
         self.devices = devices or DeviceStore()
         self.state = state or StateStore()
         self.feedback_store = feedback_store or FeedbackStore(settings.feedback_dir)
+        self.manual_feedback_store = manual_feedback_store or ManualFeedbackStore(
+            settings.feedback_dir
+        )
 
     # ------------------------------------------------------------ đăng ký
 
@@ -437,4 +450,61 @@ class DistributionService:
             new_variant_id=decision.new_variant_id,
             applies_to_class=decision.applies_to_class,
             reason=decision.reason,
+        )
+
+    def manual_feedback(self, req: ManualFeedbackRequest) -> ManualFeedbackResponse:
+        """Đánh giá thủ công từ CLI: không cần request_id còn trong RAM, không cần đăng ký lại
+        (client có thể gửi bù sau khi server khởi động lại). Trùng feedback_id thì không ghi.
+        """
+        device = self.devices.get(req.device_id)
+        now = datetime.now(timezone.utc)
+        received_at = now.isoformat(timespec="milliseconds")
+
+        def make_entry(stats: VariantStats) -> dict:
+            evaluation = evaluate_manual(
+                variant_id=req.variant_id, correct=req.correct, rating=req.rating, stats=stats
+            )
+            return {
+                "received_at": received_at,
+                **req.model_dump(),
+                "device_class": device.device_class if device else None,
+                "variant_ready": self.registry.get_ready(req.variant_id) is not None,
+                "evaluation": evaluation,
+                "processing_status": "evaluated",
+                "data_kind": "user_feedback",
+            }
+
+        entry, duplicate, path = self.manual_feedback_store.submit(
+            req.model_dump(), make_entry, now.astimezone()
+        )
+        evaluation = ManualEvaluation(**entry["evaluation"])
+        if duplicate:
+            logger.info(
+                "Feedback %s từ %s/%s đã nhận lúc %s, bỏ qua bản gửi lại",
+                req.feedback_id,
+                req.device_id,
+                req.variant_id,
+                entry["received_at"],
+            )
+        else:
+            logger.info(
+                "Feedback thủ công %s từ %s/%s: %d sao, dự đoán %s %s (nhãn thực tế %s) -> %s%s. "
+                "%s Ghi %s",
+                req.feedback_id,
+                req.device_id,
+                req.variant_id,
+                req.rating,
+                req.prediction,
+                "đúng" if req.correct else "sai",
+                req.expected_label,
+                evaluation.verdict,
+                ", cần xem lại variant" if evaluation.needs_review else "",
+                evaluation.reason,
+                path.name if path else "",
+            )
+        return ManualFeedbackResponse(
+            feedback_id=req.feedback_id,
+            status="duplicate" if duplicate else "accepted",
+            received_at=entry["received_at"],
+            evaluation=evaluation,
         )
