@@ -259,3 +259,21 @@
     width: 100%;
   }
 }
+
+/* Liên kết sang dashboard không dùng được từ thiết bị này (server ghi 127.0.0.1) */
+.link-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+a.btn {
+  text-decoration: none;
+}
+
+.dash-hint {
+  margin-top: var(--space-lg);
+}
+
+.dash-hint .icon {
+  vertical-align: -0.2em;
+}

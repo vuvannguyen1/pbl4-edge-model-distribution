@@ -14,7 +14,7 @@ import requests
 from client.agent import AgentResult
 from client.feedback import FeedbackQueue
 from client.inference import InferenceResult, Prediction
-from client.web_ui import ClientWebApp, Job, WebConfig, WebError, serve
+from client.web_ui import ClientWebApp, Job, WebConfig, WebError, dashboard_info, serve
 
 OFFLINE_SERVER = "http://127.0.0.1:9"  # cổng discard: luôn từ chối kết nối
 
@@ -269,6 +269,42 @@ def test_http_static_and_state(http_app: int) -> None:
     status, _, body = request(http_app, "GET", "/api/state")
     state = json.loads(body)
     assert status == 200 and state["device_id"] == "webA" and state["server_online"] is False
+
+
+@pytest.mark.parametrize(
+    ("server", "browser_host", "reachable"),
+    [
+        ("http://192.168.137.1:8000", "192.168.137.5:8080", True),  # điện thoại, server có IP thật
+        ("http://192.168.137.1:8000", "127.0.0.1:8080", True),
+        ("http://127.0.0.1:8000", "127.0.0.1:8080", True),  # cùng máy với server
+        ("http://127.0.0.1:8000", "localhost:8080", True),
+        ("http://127.0.0.1:8000", "[::1]:8080", True),
+        ("http://127.0.0.1:8000", "192.168.137.5:8081", False),  # điện thoại mà server là loopback
+        ("http://127.0.0.1:8000", None, True),
+    ],
+)
+def test_dashboard_info(server: str, browser_host: str | None, reachable: bool) -> None:
+    info = dashboard_info(server, browser_host)
+    assert info["url"] == f"{server}/ui/"
+    assert info["reachable"] is reachable
+    assert (info["hint"] is None) is reachable
+    if not reachable:
+        assert "--server http://<IP server>:8000" in info["hint"]
+
+
+def test_http_state_dashboard_follows_browser_host(http_app: int) -> None:
+    def state(host: str) -> dict:
+        conn = http.client.HTTPConnection("127.0.0.1", http_app, timeout=10)
+        conn.request("GET", "/api/state", headers={"Host": host})
+        body = json.loads(conn.getresponse().read())
+        conn.close()
+        return body["dashboard"]
+
+    # OFFLINE_SERVER là 127.0.0.1: mở từ chính máy thì có liên kết, từ máy khác thì làm mờ
+    local = state(f"127.0.0.1:{http_app}")
+    assert local == {"url": f"{OFFLINE_SERVER}/ui/", "reachable": True, "hint": None}
+    remote = state(f"192.168.137.5:{http_app}")
+    assert remote["reachable"] is False and remote["hint"]
 
 
 def test_http_blocks_path_traversal(http_app: int) -> None:

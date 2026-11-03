@@ -67,6 +67,29 @@ REACHABLE_TTL_S = 2.0
 HEARTBEAT_EVERY_S = 10.0  # trang đang mở thì báo server máy này còn chạy
 COMMENT_TIMEOUT_S = 3.0  # gửi kèm nhận xét chữ tới /api/user-feedback, lỗi thì bỏ qua
 HISTORY_LIMIT = 20
+DASHBOARD_HINT = "Chạy web_ui với --server http://<IP server>:8000 để mở dashboard từ thiết bị này"
+
+
+def _is_loopback(host: str) -> bool:
+    return host == "localhost" or host == "::1" or host.startswith("127.")
+
+
+def dashboard_info(server: str, browser_host: str | None) -> dict[str, Any]:
+    """Địa chỉ dashboard cho các liên kết trên trang client.
+
+    `browser_host` là header Host trình duyệt dùng để mở trang client. Server ghi 127.0.0.1
+    mà trình duyệt ở máy khác (điện thoại mở http://<IP laptop>:8080) thì liên kết sẽ trỏ về
+    chính thiết bị đó: báo `reachable=False` để giao diện làm mờ thay vì hiện liên kết hỏng.
+    """
+    server_host = urlsplit(server).hostname or ""
+    viewer = urlsplit(f"//{browser_host}").hostname if browser_host else None
+    reachable = not (_is_loopback(server_host) and viewer and not _is_loopback(viewer))
+    return {
+        "url": f"{server}/ui/",
+        "reachable": reachable,
+        "hint": None if reachable else DASHBOARD_HINT,
+    }
+
 
 # Dòng agent/downloader in ra: "  [  5/14] miếng   4 ← peer ..." và "══ [5/7] Tải model ═══"
 CHUNK_LINE = re.compile(r"\[\s*(\d+)/(\d+)\] miếng\s+\d+ ← (peer|server)")
@@ -244,7 +267,7 @@ class ClientWebApp:
             )
         return rows
 
-    def state(self) -> dict[str, Any]:
+    def state(self, browser_host: str | None = None) -> dict[str, Any]:
         holder = self._peer_agent
         service = holder.peer_service if holder else None
         current = self._current
@@ -255,6 +278,7 @@ class ClientWebApp:
             "device_id": self.config.device_id,
             "server": self.server,
             "server_online": online,
+            "dashboard": dashboard_info(self.server, browser_host),
             "device": {
                 "platform": self.device.platform,
                 "cpu_arch": self.device.cpu_arch,
@@ -617,7 +641,7 @@ def make_handler(app: ClientWebApp) -> type[BaseHTTPRequestHandler]:
                 elif path.startswith("/samples/"):
                     self._file(SAMPLES_DIR, path[len("/samples/") :])
                 elif path == "/api/state":
-                    self._json(app.state())
+                    self._json(app.state(self.headers.get("Host")))
                 elif path == "/api/samples":
                     self._json({"samples": app.samples()})
                 elif path == "/api/variants":

@@ -8,8 +8,9 @@ function sourceBadge(r) {
   if (r.offline) return badge("warning", "Offline: dùng model có sẵn trên máy");
   if (r.source === "cache") return badge("success", "Dùng model có sẵn trên máy");
   const d = r.download;
-  if (r.source !== "server" || !d) return badge("neutral", r.source);
-  if (!d.chunks_from_peer && !d.chunks_from_server) return badge("success", "Đã có đủ trên máy, server xác nhận (không tải lại)");
+  if (r.source !== "server") return badge("neutral", r.source);
+  // plan rỗng (server biết máy đã có đủ) hoặc không tải miếng nào
+  if (!d || (!d.chunks_from_peer && !d.chunks_from_server)) return badge("success", "Đã có đủ trên máy, server xác nhận (không tải lại)");
   if (d.chunks_from_peer) return badge("success", `Vừa tải: ${d.chunks_from_peer} miếng từ peer, ${d.chunks_from_server} từ server`, "share-network");
   return badge("info", `Vừa tải: ${d.chunks_from_server} miếng từ server`);
 }
@@ -28,6 +29,45 @@ let lastJobId = null; // lượt nhận diện gần nhất: nút "Tải bản �
 
 // ---------------------------------------------------------------- trạng thái chung
 
+// ---------------------------------------------------------------- liên kết sang dashboard
+
+// Mở dashboard trong tab mới để trang này giữ nguyên kết quả và phần đánh giá đang nhập.
+// Server ghi 127.0.0.1 mà trang đang mở từ máy khác (dashboard.reachable = false): làm mờ,
+// không hiện liên kết hỏng.
+function dashLink(route, content, label) {
+  const d = state?.dashboard;
+  if (!d) return content;
+  if (!d.reachable) return h("span", { class: "link-disabled", title: d.hint }, content);
+  return h(
+    "a",
+    { href: `${d.url}#/${route}`, target: "_blank", rel: "noopener", title: `${label} (tab mới)` },
+    content,
+    h("span", { class: "sr-only" }, ` (${label}, mở trong tab mới)`),
+  );
+}
+
+function dashHint() {
+  const d = state?.dashboard;
+  return d && !d.reachable ? h("p", { class: "small muted dash-hint" }, icon("info"), " ", d.hint) : null;
+}
+
+let dashKey = null;
+function renderDashButton(s) {
+  const key = JSON.stringify(s.dashboard);
+  if (key === dashKey) return; // không vẽ lại mỗi lượt poll: giữ hover/focus
+  dashKey = key;
+  const d = s.dashboard;
+  const content = [icon("gauge"), h("span", {}, "Mở dashboard")];
+  clear(
+    $("dash-link"),
+    !d
+      ? null
+      : d.reachable
+        ? h("a", { class: "btn btn-secondary btn-sm", href: `${d.url}#/overview`, target: "_blank", rel: "noopener" }, content, h("span", { class: "sr-only" }, " (mở trong tab mới)"))
+        : h("button", { class: "btn btn-secondary btn-sm link-disabled", type: "button", "aria-disabled": "true", title: d.hint, onclick: () => toast(d.hint, "warning") }, content),
+  );
+}
+
 function renderConn(s) {
   $("device-id").textContent = s.device_id;
   document.title = `${s.device_id} · PBL4 Client`;
@@ -38,6 +78,7 @@ function renderConn(s) {
   ];
   if (s.pending_feedback) parts.push(badge("warning", `${s.pending_feedback} đánh giá chờ gửi`, "hourglass"));
   clear($("conn"), parts);
+  renderDashButton(s);
   $("sync-btn").hidden = !(s.pending_feedback && s.server_online);
 }
 
@@ -297,9 +338,11 @@ function renderResult(r) {
       h(
         "dl",
         { class: "dl-grid" },
-        row("Model", h("span", { class: "mono" }, r.variant.id)),
+        row("Model", dashLink(`models/${encodeURIComponent(r.variant.id)}`, h("span", { class: "mono" }, r.variant.id), "chi tiết variant trên dashboard")),
         row("Nguồn model", sourceBadge(r)),
-        r.request_id ? row("Request", h("span", { class: "mono" }, r.request_id)) : null,
+        r.request_id
+          ? row("Request", h("span", {}, dashLink(`transfers/${encodeURIComponent(r.request_id)}`, h("span", { class: "mono" }, r.request_id), "lưới miếng trên dashboard"), state?.dashboard?.reachable ? h("span", { class: "small muted" }, " · xem lưới miếng P/S") : null))
+          : null,
         row("Latency (trung vị)", `${fmt.ms(r.latency_ms_median)} · ${r.runs} lần`),
         row("Nạp model", fmt.ms(r.load_ms)),
         row("RAM đỉnh", r.peak_ram_mb != null ? `${fmt.num(r.peak_ram_mb)} MB` : "không đo được"),
@@ -319,6 +362,7 @@ function renderResult(r) {
         r.decision?.reason ? row("Lý do", h("span", { class: "small" }, fmt.text(r.decision.reason))) : null,
       ),
     ),
+    dashHint(),
   );
   $("result-card").hidden = false;
 }
