@@ -277,7 +277,8 @@ Không cập nhật trực tiếp file model selector production sau từng feed
 
 Dữ liệu synthetic hiện tại được sinh bởi
 [selector/generate_dataset.py](./selector/generate_dataset.py) và lưu tại
-[selector/training_data/selector_synthetic_dataset.csv](./selector/training_data/selector_synthetic_dataset.csv).
+[data/selector/train.csv](./data/selector/train.csv), [data/selector/val.csv](./data/selector/val.csv)
+and [data/selector/test.csv](./data/selector/test.csv).
 
 Pipeline hiện tại mô phỏng:
 

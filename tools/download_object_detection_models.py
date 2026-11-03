@@ -37,7 +37,7 @@ def sha256_of(path: Path) -> str:
 
 
 def download(url: str, destination: Path) -> None:
-    partial = destination.with_suffix(destination.suffix + ".part")
+    partial = destination.with_name(destination.name + ".part")
     with urllib.request.urlopen(url, timeout=120) as response, partial.open("wb") as output:
         while block := response.read(READ_SIZE):
             output.write(block)
@@ -61,8 +61,14 @@ def main(manifest_path: Path) -> int:
             print(f"[LỖI] Manifest không hợp lệ cho {entry.get('variant_id', '<unknown>')}")
             ok = False
             continue
-        destination = target_dir / filename
-        if not destination.exists():
+        destination = (target_dir / filename).resolve()
+        try:
+            destination.relative_to(target_dir.resolve())
+        except ValueError:
+            print(f"[LỖI] filename nằm ngoài models/CV: {filename}")
+            ok = False
+            continue
+        if not destination.exists() or sha256_of(destination) != expected:
             print(f"[tải] {entry.get('variant_id', filename)}")
             download(url, destination)
         actual = sha256_of(destination)

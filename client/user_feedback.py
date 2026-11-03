@@ -13,9 +13,6 @@ import sys
 from typing import Any
 import requests
 
-from selector.feedback_classifier import classify_user_feedback
-
-
 def send_user_feedback(
     server_url: str,
     device_id: str,
@@ -29,8 +26,6 @@ def send_user_feedback(
     free_storage_mb: float = 1024.0,
 ) -> dict[str, Any]:
     """Phân loại feedback và gửi JSON về server."""
-    nlp_res = classify_user_feedback(feedback_text)
-
     payload = {
         "device_id": device_id,
         "platform": platform,
@@ -41,8 +36,6 @@ def send_user_feedback(
         "free_storage_mb": free_storage_mb,
         "distributed_variant": distributed_variant,
         "feedback_text": feedback_text,
-        "score": nlp_res["score"],
-        "label": nlp_res["label"],
     }
 
     url = f"{server_url.rstrip('/')}/api/user-feedback"
@@ -55,7 +48,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Gửi đánh giá feedback khách hàng về server")
     parser.add_argument("--server", default="http://127.0.0.1:8000", help="Địa chỉ server")
     parser.add_argument("--device-id", default="laptopA", help="ID thiết bị")
-    parser.add_argument("--variant", default="resnet50_fp32", help="Mô hình đã được phân phối")
+    parser.add_argument("--variant", default="yolox_nano", help="Mô hình đã được phân phối")
     parser.add_argument("--comment", required=True, help="Nội dung đánh giá của khách hàng")
     parser.add_argument("--ram", type=int, default=4096, help="RAM MB")
     parser.add_argument("--bandwidth", type=float, default=1500.0, help="Băng thông kbps")

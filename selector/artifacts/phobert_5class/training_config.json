@@ -1,0 +1,25 @@
+{
+  "model_name": "vinai/phobert-base-v2",
+  "max_length": 160,
+  "epochs": 50,
+  "early_stopping_patience": 3,
+  "seed": 42,
+  "labels": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "validation_metrics": {
+    "eval_loss": 0.7560425400733948,
+    "eval_accuracy": 0.8636363636363636,
+    "eval_macro_f1": 0.8586886321535205,
+    "eval_mae": 0.16287878787878787,
+    "eval_qwk": 0.9462871330407567,
+    "eval_runtime": 2.2819,
+    "eval_samples_per_second": 462.781,
+    "eval_steps_per_second": 28.924,
+    "epoch": 14.0
+  }
+}
