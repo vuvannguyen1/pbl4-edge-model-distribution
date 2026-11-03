@@ -226,6 +226,9 @@ data/
 data_demo/
 *.part
 *.onnx
+
+# Training checkpoints are not runtime artifacts; keep only the exported model.
+selector/artifacts/phobert_5class/checkpoints/
 # Anh demo tai bang tools/download_assets.py (giay phep thuoc tac gia goc, khong dua vao repo)
 samples/*.jpg
 samples/*.jpeg

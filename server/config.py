@@ -98,3 +98,11 @@ class Settings:
         """`PBL4_DATABASE_URL` nếu có, ngược lại SQLite tại <data_dir>/pbl4.db."""
         url = os.environ.get("PBL4_DATABASE_URL", "").strip()
         return url or f"sqlite:///{(self.data_dir / 'pbl4.db').as_posix()}"
+
+    @property
+    def selector_data_dir(self) -> Path:
+        return self.data_dir / "selector"
+
+    @property
+    def sentiment_data_dir(self) -> Path:
+        return self.data_dir / "phanloaicamxuc"

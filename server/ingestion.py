@@ -144,6 +144,11 @@ def ingest_model(
     level = int(metadata.get("level", metadata.get("compression_level", 0)))
     top1_accuracy = float(metadata.get("top1_accuracy", 0.0))
     version = str(metadata.get("version", "1.0")).strip()
+    source_provider = metadata.get("source_provider")
+    source_model_id = metadata.get("source_model_id")
+    source_revision = metadata.get("source_revision")
+    source_format = metadata.get("source_format")
+    distribution_format = metadata.get("distribution_format", "onnx")
 
     if not variant_id or not model_id:
         raise IngestionError("Metadata phải có 'variant_id' và 'model_id'.")
@@ -278,6 +283,13 @@ def _record_model(
         variant_rec.top1_accuracy = top1_accuracy
         variant_rec.status = "ready"
         variant_rec.model_card_json = json.dumps(metadata, ensure_ascii=False)
+    variant_rec.task_group = task_group
+    variant_rec.map50 = metadata.get("map50")
+    variant_rec.map50_95 = metadata.get("map50_95")
+    variant_rec.peak_ram_mb = metadata.get("peak_ram_mb")
+    variant_rec.latency_ms_p50 = metadata.get("latency_ms_p50")
+    variant_rec.latency_ms_p95 = metadata.get("latency_ms_p95")
+    variant_rec.fps = metadata.get("fps")
     session.flush()
 
     artifact_rec = session.execute(
@@ -292,6 +304,11 @@ def _record_model(
             sha256=whole_sha256,
             chunk_size=CHUNK_SIZE,
             chunk_count=len(chunks),
+            source_provider=source_provider,
+            source_model_id=source_model_id,
+            source_revision=source_revision,
+            source_format=source_format,
+            distribution_format=distribution_format,
         )
         session.add(artifact_rec)
     else:
@@ -301,6 +318,11 @@ def _record_model(
         artifact_rec.sha256 = whole_sha256
         artifact_rec.chunk_size = CHUNK_SIZE
         artifact_rec.chunk_count = len(chunks)
+        artifact_rec.source_provider = source_provider
+        artifact_rec.source_model_id = source_model_id
+        artifact_rec.source_revision = source_revision
+        artifact_rec.source_format = source_format
+        artifact_rec.distribution_format = distribution_format
 
     session.query(ModelChunkRecord).filter_by(variant_id=variant_id).delete()
     for c in chunks:
@@ -323,6 +345,7 @@ def _record_model(
             "model_id": model_id,
             "version": version,
             "task_id": task_id,
+            "task_group": task_group,
             "file": filename,
             "storage_path": storage_path,
             "base_model": model_id,
@@ -333,6 +356,11 @@ def _record_model(
             "sha256": whole_sha256,
             "chunk_size": CHUNK_SIZE,
             "chunk_count": len(chunks),
+            "source_provider": source_provider,
+            "source_model_id": source_model_id,
+            "source_revision": source_revision,
+            "source_format": source_format,
+            "distribution_format": distribution_format,
             "top1_accuracy": top1_accuracy,
             "input_shape": metadata.get("input_shape", [1, 3, 224, 224]),
             "input_dtype": metadata.get("input_dtype", "float"),

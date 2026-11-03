@@ -24,12 +24,26 @@ dev = [
     "jsonschema",
     "httpx",
 ]
+
 # huấn luyện/huấn luyện lại ML Selector (selector/train.py, selector/retrain.py)
 ml = [
     "joblib",
     "pandas",
     "scikit-learn",
     "lightgbm",
+]
+# huấn luyện PhoBERT (training/, notebooks/)
+training = [
+    "accelerate",
+    "datasets",
+    "joblib",
+    "lightgbm",
+    "openpyxl",
+    "pandas",
+    "scikit-learn",
+    "sentencepiece",
+    "torch",
+    "transformers",
 ]
 
 [tool.setuptools]

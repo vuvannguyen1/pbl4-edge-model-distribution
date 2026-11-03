@@ -11,8 +11,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
+
 from selector.feedback_classifier import classify_user_feedback
-from server.db import get_session_factory, record_user_feedback as db_record_user_feedback
+from server.db import (
+    apply_selector_feedback,
+    get_session_factory,
+    record_user_feedback as db_record_user_feedback,
+)
+from server.db.models import UserFeedbackRecord
 
 logger = logging.getLogger("server.user_feedback")
 
@@ -24,6 +31,7 @@ def record_user_feedback(payload: dict[str, Any], log_path: Path) -> dict[str, A
     text = payload.get("feedback_text", "").strip()
     score = payload.get("score")
     label = payload.get("label")
+    nlp_res: dict[str, Any] | None = None
 
     # Nếu client chưa phân loại, server chạy NLP classifier
     if score is None or not label:
@@ -50,6 +58,9 @@ def record_user_feedback(payload: dict[str, Any], log_path: Path) -> dict[str, A
         "score": int(score),
         "label": str(label),
         "flag_for_retrain": flag_for_retrain,
+        "sentiment_confidence": nlp_res.get("confidence") if nlp_res else payload.get("confidence"),
+        "sentiment_engine": nlp_res.get("engine") if nlp_res else payload.get("engine", "client"),
+        "task_id": payload.get("task_id", "object_detection"),
     }
 
     # 1. Ghi log JSONL (bảo toàn tương thích ngược)
@@ -59,6 +70,17 @@ def record_user_feedback(payload: dict[str, Any], log_path: Path) -> dict[str, A
     # 2. Ghi vào CSDL SQL
     try:
         with get_session_factory()() as db_session:
+            is_duplicate = False
+            feedback_id = payload.get("feedback_id")
+            if feedback_id:
+                is_duplicate = (
+                    db_session.execute(
+                        select(UserFeedbackRecord).where(
+                            UserFeedbackRecord.feedback_id == feedback_id
+                        )
+                    ).scalar_one_or_none()
+                    is not None
+                )
             db_record_user_feedback(
                 session=db_session,
                 device_id=device_id,
@@ -72,7 +94,22 @@ def record_user_feedback(payload: dict[str, Any], log_path: Path) -> dict[str, A
                 rating=payload.get("rating"),
                 is_correct=payload.get("is_correct"),
                 actual_label=payload.get("actual_label"),
+                sentiment_confidence=record["sentiment_confidence"],
+                sentiment_engine=record["sentiment_engine"],
+                feedback_reason=payload.get("feedback_reason"),
             )
+            if (
+                not is_duplicate
+                and (record["sentiment_confidence"] is None or record["sentiment_confidence"] >= 0.75)
+            ):
+                apply_selector_feedback(
+                    session=db_session,
+                    task_id=record["task_id"],
+                    variant_id=variant_id,
+                    device_class=payload.get("device_class"),
+                    sentiment_score=int(score),
+                    feedback_id=payload.get("feedback_id"),
+                )
     except Exception as exc:
         logger.warning("Không thể ghi user feedback vào CSDL: %s", exc)
 
@@ -84,4 +121,6 @@ def record_user_feedback(payload: dict[str, Any], log_path: Path) -> dict[str, A
         "score": score,
         "label": label,
         "flag_for_retrain": flag_for_retrain,
+        "confidence": record["sentiment_confidence"],
+        "engine": record["sentiment_engine"],
     }

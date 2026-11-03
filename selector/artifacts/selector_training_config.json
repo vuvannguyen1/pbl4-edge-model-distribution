@@ -1,0 +1,27 @@
+{
+  "features": [
+    "platform",
+    "cpu_arch",
+    "ram_mb",
+    "bandwidth_kbps",
+    "deadline_s",
+    "free_storage_mb",
+    "sentiment_score",
+    "sentiment_confidence"
+  ],
+  "catalog": [
+    "fasterrcnn_r50_12_int8",
+    "retinanet_resnet101",
+    "ssd_mobilenet_v1_12",
+    "ssd_mobilenet_v1_12_int8",
+    "yolox_l",
+    "yolox_m",
+    "yolox_nano",
+    "yolox_s",
+    "yolox_tiny",
+    "yolox_x"
+  ],
+  "feedback_path": "C:\\Users\\admin\\OneDrive - The University of Technology\\Desktop\\pbl4-edge-model-distribution\\data\\user_feedbacks.jsonl",
+  "samples": 30000,
+  "seed": 42
+}

@@ -240,13 +240,20 @@ def create_app(settings: Settings | None = None, selector: ModelSelector | None 
     # Khởi tạo CSDL SQL (theo settings.data_dir, để test không chạm data/ thật) và đồng bộ
     # Registry ban đầu. CSDL lỗi không chặn phân phối: luồng Protocol chỉ dựa vào Registry.
     try:
-        from server.db import get_session_factory, init_db, init_engine, sync_registry_to_db
+        from server.db import (
+            get_session_factory,
+            init_db,
+            init_engine,
+            sync_data_to_db,
+            sync_registry_to_db,
+        )
 
         settings.data_dir.mkdir(parents=True, exist_ok=True)
         init_engine(settings.database_url)
         init_db()
         with get_session_factory()() as db_session:
             sync_registry_to_db(db_session, settings.registry_path, MODEL_CARDS_DIR)
+            sync_data_to_db(db_session, settings.data_dir)
     except Exception as exc:
         logger.warning("Không khởi tạo được CSDL (%s): %s", settings.database_url, exc)
 

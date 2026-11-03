@@ -17,6 +17,8 @@ from server.db.models import (
     ModelFamilyRecord,
     ModelVariantRecord,
     PerformanceFeedbackRecord,
+    DataFileRecord,
+    SelectorWeightRecord,
     TaskRecord,
     UserFeedbackRecord,
 )
@@ -27,8 +29,9 @@ from server.db.repository import (
     record_distribution_request,
     record_performance_feedback,
     record_user_feedback,
+    apply_selector_feedback,
 )
-from server.db.sync import sync_registry_to_db
+from server.db.sync import sync_data_to_db, sync_registry_to_db
 
 __all__ = [
     "Base",
@@ -47,12 +50,15 @@ __all__ = [
     "DistributionRequestRecord",
     "PerformanceFeedbackRecord",
     "UserFeedbackRecord",
+    "SelectorWeightRecord",
+    "DataFileRecord",
     "sync_registry_to_db",
     "get_ready_variants",
     "record_device",
     "record_distribution_request",
     "record_performance_feedback",
     "record_user_feedback",
+    "apply_selector_feedback",
     "get_feedback_statistics",
+    "sync_data_to_db",
 ]
-
