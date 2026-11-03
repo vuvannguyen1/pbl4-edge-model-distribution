@@ -20,6 +20,7 @@ from server.db.models import (
     PerformanceFeedbackRecord,
     TaskRecord,
     UserFeedbackRecord,
+    SelectorWeightRecord,
 )
 
 
@@ -160,6 +161,9 @@ def record_user_feedback(
     rating: int | None = None,
     is_correct: bool | None = None,
     actual_label: str | None = None,
+    sentiment_confidence: float | None = None,
+    sentiment_engine: str | None = None,
+    feedback_reason: str | None = None,
 ) -> UserFeedbackRecord:
     """Lưu đánh giá người dùng (NLP sentiment / CLI rating) vào database."""
     if feedback_id:
@@ -181,8 +185,66 @@ def record_user_feedback(
         sentiment_score=sentiment_score,
         sentiment_label=sentiment_label,
         flag_for_retrain=flag_for_retrain,
+        sentiment_confidence=sentiment_confidence,
+        sentiment_engine=sentiment_engine,
+        feedback_reason=feedback_reason,
     )
     session.add(record)
+    session.commit()
+    return record
+
+
+def apply_selector_feedback(
+    session: Session,
+    *,
+    task_id: str,
+    variant_id: str,
+    device_class: str | None,
+    sentiment_score: int,
+    feedback_id: str | None,
+    reward: float = 0.25,
+    penalty: float = 0.25,
+    minimum: float = -5.0,
+    maximum: float = 5.0,
+) -> SelectorWeightRecord:
+    """Cập nhật trọng số selector theo score 1..5, có clamp và chống lặp feedback."""
+    if sentiment_score not in {1, 2, 3, 4, 5}:
+        raise ValueError("sentiment_score phải nằm trong khoảng 1..5")
+    if feedback_id:
+        duplicate = session.execute(
+            select(SelectorWeightRecord).where(
+                SelectorWeightRecord.last_feedback_id == feedback_id
+            )
+        ).scalar_one_or_none()
+        if duplicate is not None:
+            return duplicate
+
+    record = session.execute(
+        select(SelectorWeightRecord)
+        .where(
+            SelectorWeightRecord.task_id == task_id,
+            SelectorWeightRecord.variant_id == variant_id,
+            SelectorWeightRecord.device_class == device_class,
+        )
+        .order_by(desc(SelectorWeightRecord.version))
+    ).scalars().first()
+    if record is None:
+        record = SelectorWeightRecord(
+            task_id=task_id,
+            variant_id=variant_id,
+            device_class=device_class,
+            weight=0.0,
+            version=1,
+        )
+        session.add(record)
+        session.flush()
+
+    delta = 0.0 if sentiment_score == 3 else (
+        reward if sentiment_score >= 4 else -penalty
+    )
+    record.weight = max(minimum, min(maximum, record.weight + delta))
+    record.version += 1
+    record.last_feedback_id = feedback_id
     session.commit()
     return record
 
@@ -205,4 +267,3 @@ def get_feedback_statistics(session: Session) -> dict[str, Any]:
         "user_feedback_count": user_count,
         "retrain_flagged_count": retrain_needed_count,
     }
-

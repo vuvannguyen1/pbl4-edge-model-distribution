@@ -13,6 +13,7 @@ import re
 import sys
 import unicodedata
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 LABEL_MAP = {
@@ -87,7 +88,19 @@ class FeedbackClassifier:
         if use_neural:
             try:
                 from transformers import pipeline
-                model_id = model_name or "nlptown/bert-base-multilingual-uncased-sentiment"
+                default_dir = (
+                    Path(__file__).resolve().parent / "artifacts" / "phobert_5class"
+                )
+                legacy_dir = (
+                    Path(__file__).resolve().parent.parent / "data" / "phanloaicamxuc" / "model"
+                )
+                if not default_dir.is_dir() and legacy_dir.is_dir():
+                    default_dir = legacy_dir
+                model_id = model_name or str(default_dir)
+                if model_name is None and not default_dir.is_dir():
+                    raise FileNotFoundError(
+                        f"Chưa có model NLP local tại {default_dir}; dùng lexicon fallback"
+                    )
                 self.neural_pipeline = pipeline("sentiment-analysis", model=model_id)
             except Exception as e:
                 sys.stderr.write(f"[Cảnh báo] Không thể nạp neural model ({e}), chuyển sang chế độ lexicon.\n")
@@ -148,7 +161,11 @@ _default_classifier: FeedbackClassifier | None = None
 def get_classifier() -> FeedbackClassifier:
     global _default_classifier
     if _default_classifier is None:
-        _default_classifier = FeedbackClassifier(use_neural=False)
+        local_model = Path(__file__).resolve().parent / "artifacts" / "phobert_5class"
+        legacy_model = Path(__file__).resolve().parent.parent / "data" / "phanloaicamxuc" / "model"
+        if not local_model.is_dir() and legacy_model.is_dir():
+            local_model = legacy_model
+        _default_classifier = FeedbackClassifier(use_neural=local_model.is_dir())
     return _default_classifier
 
 

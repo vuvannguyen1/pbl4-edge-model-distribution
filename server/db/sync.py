@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import hashlib
+import mimetypes
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +19,7 @@ from server.db.models import (
     ModelFamilyRecord,
     ModelVariantRecord,
     TaskRecord,
+    DataFileRecord,
 )
 
 logger = logging.getLogger("pbl4.server.db.sync")
@@ -95,6 +99,13 @@ def sync_registry_to_db(
             variant_rec.status = v.get("status", "ready")
             if card_json:
                 variant_rec.model_card_json = card_json
+        variant_rec.task_group = str(v.get("task_group", "CV"))
+        variant_rec.map50 = _float_or_none(v.get("map50"))
+        variant_rec.map50_95 = _float_or_none(v.get("map50_95"))
+        variant_rec.peak_ram_mb = _float_or_none(v.get("peak_ram_mb"))
+        variant_rec.latency_ms_p50 = _float_or_none(v.get("latency_ms_p50"))
+        variant_rec.latency_ms_p95 = _float_or_none(v.get("latency_ms_p95"))
+        variant_rec.fps = _float_or_none(v.get("fps"))
 
         session.flush()
 
@@ -112,6 +123,11 @@ def sync_registry_to_db(
                 sha256=v["sha256"],
                 chunk_size=int(v.get("chunk_size", 1048576)),
                 chunk_count=int(v["chunk_count"]),
+                source_provider=v.get("source_provider"),
+                source_model_id=v.get("source_model_id"),
+                source_revision=v.get("source_revision"),
+                source_format=v.get("source_format"),
+                distribution_format=v.get("distribution_format", "onnx"),
             )
             session.add(artifact_rec)
         else:
@@ -121,6 +137,11 @@ def sync_registry_to_db(
             artifact_rec.sha256 = v["sha256"]
             artifact_rec.chunk_size = int(v.get("chunk_size", 1048576))
             artifact_rec.chunk_count = int(v["chunk_count"])
+            artifact_rec.source_provider = v.get("source_provider")
+            artifact_rec.source_model_id = v.get("source_model_id")
+            artifact_rec.source_revision = v.get("source_revision")
+            artifact_rec.source_format = v.get("source_format")
+            artifact_rec.distribution_format = v.get("distribution_format", "onnx")
 
         # 6. Cập nhật Chunks
         session.query(ModelChunkRecord).filter_by(variant_id=variant_id).delete()
@@ -141,3 +162,43 @@ def sync_registry_to_db(
     logger.info("Đã đồng bộ %d variant từ %s vào CSDL SQL", count, registry_path)
     return count
 
+
+def _float_or_none(value: Any) -> float | None:
+    return None if value is None else float(value)
+
+
+def sync_data_to_db(session: Session, data_dir: Path) -> int:
+    """Đồng bộ mọi file trong data/ vào DB, trừ chính file database và file tạm."""
+    if not data_dir.is_dir():
+        return 0
+    count = 0
+    for path in sorted(p for p in data_dir.rglob("*") if p.is_file()):
+        relative = path.relative_to(data_dir).as_posix()
+        if relative == "pbl4.db" or relative.endswith(".tmp"):
+            continue
+        content = path.read_bytes()
+        digest = hashlib.sha256(content).hexdigest()
+        record = session.execute(
+            select(DataFileRecord).where(DataFileRecord.relative_path == relative)
+        ).scalar_one_or_none()
+        modified = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+        if record is None:
+            record = DataFileRecord(
+                relative_path=relative,
+                content_type=mimetypes.guess_type(path.name)[0] or "application/octet-stream",
+                size_bytes=len(content),
+                sha256=digest,
+                content=content,
+                modified_at=modified,
+            )
+            session.add(record)
+        elif record.sha256 != digest:
+            record.content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            record.size_bytes = len(content)
+            record.sha256 = digest
+            record.content = content
+            record.modified_at = modified
+        count += 1
+    session.commit()
+    logger.info("Đã đồng bộ %d file trong %s vào CSDL", count, data_dir)
+    return count

@@ -24,6 +24,18 @@ dev = [
     "jsonschema",
     "httpx",
 ]
+training = [
+    "accelerate",
+    "datasets",
+    "joblib",
+    "lightgbm",
+    "openpyxl",
+    "pandas",
+    "scikit-learn",
+    "sentencepiece",
+    "torch",
+    "transformers",
+]
 
 [tool.setuptools]
 packages = ["server", "client"]

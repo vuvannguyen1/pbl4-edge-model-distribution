@@ -14,8 +14,9 @@ if sys.stdout.encoding != 'utf-8':
 
 import pandas as pd
 import numpy as np
+from sklearn.model_selection import train_test_split
 
-# 1. Định nghĩa thông số kỹ thuật của 4 model ONNX khởi tạo
+# 1. Đọc thông số model CV đã đăng ký
 MODELS = {
     "mobilenetv2_int8": {
         "size_bytes": 3655033,       # ~3.49 MB
@@ -51,6 +52,24 @@ MODELS = {
     }
 }
 
+CATALOG_PATH = Path(__file__).resolve().parent.parent / "data" / "cv_model_catalog.json"
+
+
+def load_catalog_models() -> dict:
+    if not CATALOG_PATH.is_file():
+        return MODELS
+    catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+    models = {}
+    for entry in catalog:
+        models[entry["variant_id"]] = {
+            "size_bytes": int(entry["size_bytes"]),
+            "peak_ram_mb": float(entry["peak_ram_mb"]),
+            "top1_accuracy": float(entry.get("quality_score", 0.0)),
+            "base_latency_ms": float(entry["latency_ms_p50"]),
+            "load_time_s": max(0.1, float(entry["latency_ms_p50"]) / 1000),
+            "precision": entry.get("precision", "fp32"),
+        }
+    return models or MODELS
 PLATFORMS = ["android", "android_browser", "ios_browser", "windows", "linux"]
 CPU_ARCHS = ["aarch64", "x86_64", "arm32"]
 
@@ -120,6 +139,7 @@ def evaluate_candidate(variant_id, specs, platform, cpu_arch, ram_mb, bandwidth_
 
 
 def generate_samples(n_samples=30000, seed=42):
+    models = load_catalog_models()
     random.seed(seed)
     np.random.seed(seed)
 
@@ -156,7 +176,7 @@ def generate_samples(n_samples=30000, seed=42):
         best_variant = None
         best_score = -9999
         
-        for variant_id, specs in MODELS.items():
+        for variant_id, specs in models.items():
             score, reason = evaluate_candidate(
                 variant_id, specs, platform, cpu_arch, ram_mb,
                 bandwidth_kbps, deadline_s, free_storage_mb
@@ -184,13 +204,19 @@ def generate_samples(n_samples=30000, seed=42):
 
 
 if __name__ == "__main__":
-    out_dir = Path(__file__).resolve().parent / "training_data"
+    out_dir = Path(__file__).resolve().parent.parent / "data" / "selector"
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_file = out_dir / "selector_synthetic_dataset.csv"
 
     print("Đang tạo tập dữ liệu mô phỏng 30,000 mẫu...")
     df = generate_samples(30000)
-    df.to_csv(out_file, index=False, encoding="utf-8")
-    print(f"Đã lưu thành công tại: {out_file}")
+    train_df, holdout_df = train_test_split(
+        df, test_size=0.2, random_state=42, stratify=df["selected_variant"]
+    )
+    val_df, test_df = train_test_split(
+        holdout_df, test_size=0.5, random_state=42, stratify=holdout_df["selected_variant"]
+    )
+    for split, split_df in (("train", train_df), ("val", val_df), ("test", test_df)):
+        split_df.to_csv(out_dir / f"{split}.csv", index=False, encoding="utf-8")
+    print(f"Đã lưu train/val/test tại: {out_dir}")
     print("\nPhân phối nhãn (selected_variant):")
     print(df["selected_variant"].value_counts(normalize=True).apply(lambda x: f"{x*100:.2f}%"))

@@ -14,33 +14,27 @@ if sys.stdout.encoding != 'utf-8':
 import joblib
 import pandas as pd
 
-# Metadata kích thước và thông số 4 model
-MODEL_SPECS = {
-    "mobilenetv2_int8": {
-        "file": "mobilenetv2-12-int8.onnx",
-        "size_bytes": 3655033,
-        "peak_ram_mb": 110,
-        "precision": "int8"
-    },
-    "mobilenetv2_fp32": {
-        "file": "mobilenetv2-12-fp32.onnx",
-        "size_bytes": 14260000,
-        "peak_ram_mb": 170,
-        "precision": "fp32"
-    },
-    "resnet50_int8": {
-        "file": "resnet50-v1-int8.onnx",
-        "size_bytes": 25500000,
-        "peak_ram_mb": 260,
-        "precision": "int8"
-    },
-    "resnet50_fp32": {
-        "file": "resnet50-v1-fp32.onnx",
-        "size_bytes": 98200000,
-        "peak_ram_mb": 420,
-        "precision": "fp32"
-    }
-}
+from selector.feedback_classifier import classify_user_feedback
+
+# Metadata kích thước và thông số model CV trong catalog
+REGISTRY_PATH = Path(__file__).resolve().parent.parent / "registry" / "model_registry.json"
+
+def load_model_specs() -> dict:
+    registry = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
+    specs = {}
+    for entry in registry["variants"]:
+        if entry.get("task_id") != "object_detection" or entry.get("status") != "ready":
+            continue
+        size_mb = float(entry["size_bytes"]) / 1024 / 1024
+        specs[entry["variant_id"]] = {
+            "file": entry["file"],
+            "size_bytes": int(entry["size_bytes"]),
+            "peak_ram_mb": float(entry.get("minimum_ram_mb") or max(128.0, size_mb * 1.5)),
+            "precision": entry.get("precision", "fp32"),
+        }
+    if not specs:
+        raise ValueError("Registry khÃ´ng cÃ³ object_detection variant ready")
+    return specs
 
 _MODEL_PATH = Path(__file__).resolve().parent / "artifacts" / "selector_model.joblib"
 _pipeline = None
@@ -64,11 +58,12 @@ def select_model(register_data: dict, request_data: dict) -> dict:
     Trả về dict gồm: variant_id, reason, estimated_download_s, confidence
     """
     pipeline = get_pipeline()
+    model_specs = load_model_specs()
 
     # 1. Nếu client chỉ định preferred_variant hợp lệ
     preferred = request_data.get("preferred_variant")
-    if preferred and preferred in MODEL_SPECS:
-        est_download_s = round((MODEL_SPECS[preferred]["size_bytes"] * 8.0) / (request_data["bandwidth_kbps"] * 1000.0), 2)
+    if preferred and preferred in model_specs:
+        est_download_s = round((model_specs[preferred]["size_bytes"] * 8.0) / (request_data["bandwidth_kbps"] * 1000.0), 2)
         return {
             "variant_id": preferred,
             "reason": f"Client yêu cầu rõ biến thể {preferred}.",
@@ -85,13 +80,23 @@ def select_model(register_data: dict, request_data: dict) -> dict:
     deadline_s = float(request_data.get("deadline_s", 10.0))
     free_storage_mb = float(request_data.get("free_storage_mb") or 1024.0)
 
+    sentiment_score = request_data.get("sentiment_score", 3)
+    sentiment_confidence = request_data.get("sentiment_confidence", 0.0)
+    feedback_text = request_data.get("feedback_text")
+    if feedback_text and "sentiment_score" not in request_data:
+        sentiment = classify_user_feedback(str(feedback_text))
+        sentiment_score = sentiment["score"]
+        sentiment_confidence = sentiment["confidence"]
+
     input_df = pd.DataFrame([{
         "platform": platform,
         "cpu_arch": cpu_arch,
         "ram_mb": ram_mb,
         "bandwidth_kbps": bandwidth_kbps,
         "deadline_s": deadline_s,
-        "free_storage_mb": free_storage_mb
+        "free_storage_mb": free_storage_mb,
+        "sentiment_score": float(sentiment_score),
+        "sentiment_confidence": float(sentiment_confidence),
     }])
 
     # 3. AI Inference
@@ -109,14 +114,21 @@ def select_model(register_data: dict, request_data: dict) -> dict:
             "confidence": confidence
         }
 
-    specs = MODEL_SPECS[predicted_variant]
+    if predicted_variant not in model_specs:
+        return {
+            "variant_id": None,
+            "error_code": "UNKNOWN_VARIANT",
+            "reason": f"Selector trả về model chưa có trong catalog: {predicted_variant}.",
+            "confidence": confidence,
+        }
+    specs = model_specs[predicted_variant]
     est_download_s = round((specs["size_bytes"] * 8.0) / (bandwidth_kbps * 1000.0), 2)
 
     # Kiểm tra hard-constraint để đảm bảo AI không chọn sai do edge case
     if est_download_s > deadline_s or (ram_mb * 0.7 < specs["peak_ram_mb"]):
         # Fallback về bản nhẹ nhất an toàn: mobilenetv2_int8
-        safe_fallback = "mobilenetv2_int8"
-        safe_est_s = round((MODEL_SPECS[safe_fallback]["size_bytes"] * 8.0) / (bandwidth_kbps * 1000.0), 2)
+        safe_fallback = min(model_specs, key=lambda variant: model_specs[variant]["size_bytes"])
+        safe_est_s = round((model_specs[safe_fallback]["size_bytes"] * 8.0) / (bandwidth_kbps * 1000.0), 2)
         if safe_est_s <= deadline_s:
             return {
                 "variant_id": safe_fallback,

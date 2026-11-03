@@ -19,6 +19,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
 )
@@ -85,6 +86,13 @@ class ModelVariantRecord(Base):
     precision: Mapped[str] = mapped_column(String(32), nullable=False)  # fp32, int8, fp16
     compression_level: Mapped[int] = mapped_column(Integer, default=0)
     top1_accuracy: Mapped[float] = mapped_column(Float, default=0.0)
+    task_group: Mapped[str] = mapped_column(String(32), default="CV", index=True)
+    map50: Mapped[float | None] = mapped_column(Float, nullable=True)
+    map50_95: Mapped[float | None] = mapped_column(Float, nullable=True)
+    peak_ram_mb: Mapped[float | None] = mapped_column(Float, nullable=True)
+    latency_ms_p50: Mapped[float | None] = mapped_column(Float, nullable=True)
+    latency_ms_p95: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fps: Mapped[float | None] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(
         String(32), default="ready", index=True
     )  # draft, validating, ready, disabled, retired
@@ -122,6 +130,11 @@ class ModelArtifactRecord(Base):
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     chunk_size: Mapped[int] = mapped_column(Integer, default=1048576)
     chunk_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    source_model_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    source_revision: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    source_format: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    distribution_format: Mapped[str] = mapped_column(String(32), default="onnx")
 
     variant: Mapped[ModelVariantRecord] = relationship(
         "ModelVariantRecord", back_populates="artifact"
@@ -246,6 +259,42 @@ class UserFeedbackRecord(Base):
     feedback_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     sentiment_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sentiment_label: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    sentiment_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sentiment_engine: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    feedback_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
     flag_for_retrain: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
 
+
+class SelectorWeightRecord(Base):
+    """Trọng số thưởng/phạt version hóa cho model selector."""
+
+    __tablename__ = "selector_weights"
+    __table_args__ = (
+        Index("idx_selector_weight_scope", "task_id", "variant_id", "device_class"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    task_id: Mapped[str] = mapped_column(String(64), index=True)
+    variant_id: Mapped[str] = mapped_column(String(64), index=True)
+    device_class: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    weight: Mapped[float] = mapped_column(Float, default=0.0)
+    version: Mapped[int] = mapped_column(Integer, default=1, index=True)
+    last_feedback_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
+
+
+class DataFileRecord(Base):
+    """Snapshot dữ liệu dưới data/ để database có thể backup/tái lập toàn bộ dữ liệu."""
+
+    __tablename__ = "data_files"
+    __table_args__ = (Index("idx_data_file_path", "relative_path", unique=True),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    relative_path: Mapped[str] = mapped_column(String(1000), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(128), default="application/octet-stream")
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    modified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    synced_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)

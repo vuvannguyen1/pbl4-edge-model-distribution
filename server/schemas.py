@@ -78,7 +78,7 @@ class RegisterResponse(_Outgoing):
 
 class ModelRequest(_Incoming):
     device_id: DeviceId
-    task: Literal["image_classification"]
+    task: Literal["image_classification", "object_detection"]
     bandwidth_kbps: PositiveOrNull
     deadline_s: float = Field(gt=0)
     free_storage_mb: NullableNonNeg
