@@ -229,3 +229,7 @@ data/
 samples/*.jpg
 samples/*.jpeg
 samples/*.png
+
+# Cau hinh Claude Code (rieng tung may, khong dua vao repo)
+.claude/
+CLAUDE.md
