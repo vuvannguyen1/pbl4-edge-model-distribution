@@ -15,6 +15,7 @@ dependencies = [
     "onnxruntime",
     "numpy",
     "pillow",
+    "sqlalchemy>=2.0",
 ]
 
 [project.optional-dependencies]

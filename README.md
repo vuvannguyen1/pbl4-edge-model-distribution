@@ -8,25 +8,145 @@ Hệ thống phân phối model AI (ONNX) cho thiết bị edge theo băng thôn
   cùng lớp và nhận feedback.
 - **Client agent** (Python CLI): đăng ký, đo băng thông, xin model, tải tối đa 4 miếng song
   song có kiểm SHA-256 và fallback, chạy phân loại ảnh bằng ONNX Runtime (Top-5), gửi số đo
-  thực tế; đồng thời làm peer chia sẻ miếng cho máy khác.
+  thực tế; đồng thời làm peer chia sẻ miếng cho máy khác. Model tải về nằm lại trên máy:
+  `python -m client.detect` mở hộp thoại chọn ảnh trên máy và nhận diện offline, không cần
+  server. Client báo trên terminal khi mất kết nối tới server.
 
 Hợp đồng giao thức: [docs/protocol.md](docs/protocol.md) và
 [docs/protocol.schema.json](docs/protocol.schema.json).
 
-## Chạy nhanh
+## Chạy chương trình
+
+Mọi lệnh chạy trong `cmd` tại thư mục gốc repo (Windows). Chạy `chcp 65001` trước nếu chữ tiếng
+Việt bị lỗi. Ví dụ dưới dùng server ở `http://127.0.0.1:8000`; chạy trên hai máy thì thay bằng IP
+LAN của máy server, ví dụ `http://192.168.137.1:8000` (xem [docs/run_demo.md](docs/run_demo.md)
+mục 7 về hotspot và firewall).
+
+### 1. Cài đặt (một lần)
 
 ```cmd
 pip install -e .[dev]
 python tools\download_models.py
 python tools\build_registry.py
 python tools\download_assets.py
-
-uvicorn server.main:app --host 0.0.0.0 --port 8000
-python -m client.agent --server http://localhost:8000 --device-id laptopA --image samples\dog.jpg
 ```
 
-Hướng dẫn demo đầy đủ (các mức băng thông, P2P, fallback, hotspot, đọc log, lỗi hay gặp):
-**[docs/run_demo.md](docs/run_demo.md)**.
+`build_registry.py` phải in `4 variant, 4 ready`. Máy chỉ chạy client thì chỉ cần thư mục
+`client/` và `samples/imagenet_synset.txt`, cài `pip install requests onnxruntime numpy pillow`.
+
+### 2. Server
+
+```cmd
+uvicorn server.main:app --host 0.0.0.0 --port 8000
+```
+
+Server in `Server sẵn sàng ... 4 variant ready` là xong. Muốn giả lập mạng chậm (để thấy server
+chọn model khác nhau và thấy lợi ích P2P), đặt giới hạn tốc độ trước khi chạy:
+
+```cmd
+set PBL4_RATE_LIMIT_KBPS=2000
+uvicorn server.main:app --host 0.0.0.0 --port 8000
+```
+
+Bấm **Ctrl+C** để tắt server. Server giữ trạng thái trong RAM, tắt rồi bật lại là trạng thái sạch.
+
+### 3. Client khi CÓ kết nối server: xin và tải model
+
+```cmd
+python -m client.agent --server http://127.0.0.1:8000 --device-id laptopB --peer-port 0
+```
+
+- Bỏ `--image` thì client mở **hộp thoại chọn ảnh** trên máy; hoặc truyền thẳng
+  `--image samples\dog.jpg` (ảnh ở đâu cũng được).
+- Client chạy 7 bước: đăng ký, đo băng thông, xin model (server trả lý do chọn), tải từng miếng có
+  kiểm SHA-256, nhận diện ảnh (Top-5), gửi feedback.
+- Model được **giữ lại trên máy** ở `data\client\<device_id>\<variant_id>\` (file `.onnx` và
+  `variant.json` ghi kích thước, SHA-256, phiên bản, task, input, runtime và trạng thái
+  `partial`/`complete`/`invalid`), kèm `data\client\<device_id>\active.json` ghi model đang dùng.
+- Lần chạy sau, nếu kho đã có model `complete` đúng SHA-256 thì client **không gửi
+  `/api/request`**, nhận diện ngay bằng model đó. Model bị sửa/hỏng thì bị đánh `invalid` và được
+  tải lại khi có server. Thêm `--refresh` để buộc hỏi server (vd. kiểm tra bản mới).
+
+Tham số hay dùng:
+
+| Tham số | Ý nghĩa |
+|---|---|
+| `--bandwidth 2000` | Giả lập băng thông (kbps) thay vì đo bằng `/api/probe` |
+| `--preferred-variant mobilenetv2_int8` | Xin đúng một model, bỏ qua Selector |
+| `--peer-port 9000 --serve` | Chia sẻ model cho máy khác (P2P) và **chạy liên tục** đến khi bấm Ctrl+C |
+| `--follow-switch` | Server bảo đổi sang model nhẹ hơn thì tự xin lại |
+| `--refresh` | Hỏi server dù máy đã có model hợp lệ |
+
+### 4. Client khi NGẮT kết nối server: dùng model đã tải
+
+Chỉ cần đã chạy `client.agent` thành công **một lần** khi có server. Sau đó, kể cả khi tắt máy bật
+lại hoặc server đã đóng:
+
+```cmd
+python -m client.detect --device-id laptopB
+python -m client.detect --device-id laptopB --image samples\dog.jpg samples\cat.jpg
+python -m client.detect --device-id laptopB --image samples
+```
+
+- Không gọi server. Kiểm SHA-256 model trước khi dùng, nạp model một lần rồi nhận diện mọi ảnh.
+- Bỏ `--image`: mở hộp thoại chọn ảnh (chọn được nhiều ảnh), nhận diện xong lại mở hộp thoại cho
+  ảnh tiếp theo; bấm **Cancel** để thoát.
+- Chỉ có một thiết bị trong `data\client\` thì bỏ được `--device-id`.
+
+`client.agent` cũng tự xử lý khi server đóng:
+
+| Lúc server đóng | Client in ra |
+|---|---|
+| Trước khi chạy `client.agent` (chờ mở kết nối tối đa 5 s) | `Chuyển sang chế độ offline`, nhận diện bằng model `complete` có sẵn, `HOÀN TẤT (offline)` (bỏ qua feedback tự động) |
+| Khi client đang chạy `--serve` | `[giờ] MẤT KẾT NỐI tới server ...`; server mở lại thì `[giờ] Đã kết nối lại server ...` và gửi bù đánh giá `pending` |
+| Giữa lúc xin/tải model | Chuyển sang offline nếu kho có model `complete` khác; không có thì dừng |
+| Sau khi đã nhận diện xong | Bỏ qua gửi số đo, vẫn `HOÀN TẤT` |
+
+Cache chưa có model mà không kết nối được server thì client báo chưa thể detect offline vì chưa có
+model và cần chạy lại khi có kết nối. Server tắt không bao giờ làm xóa model trên máy.
+
+### 5. Gửi đánh giá kết quả nhận diện
+
+Sau `client.agent` hoặc `client.detect`, người dùng tự gửi đánh giá bằng lệnh:
+
+```cmd
+python -m client.feedback_cli --device-id laptopB --server http://127.0.0.1:8000
+```
+
+- CLI lấy model và dự đoán của **lần detect gần nhất** (`data\client\<device_id>\last_detect.json`),
+  rồi hỏi: điểm (1-5), dự đoán có đúng không, nhãn thực tế (nếu biết), nhận xét. Có thể trả lời
+  trước bằng `--variant-id`, `--rating 5 --correct yes --expected-label ... --comment ...`.
+- Ở câu hỏi điểm và câu hỏi đúng/sai, **nhấn Enter bỏ trống là thoát**: đánh giá không được lưu
+  vào hàng chờ. (Enter ở nhãn thực tế/nhận xét vẫn là bỏ qua câu đó.)
+- Server đã chạy lại mà còn đánh giá `pending` từ lần trước, CLI liệt kê chúng và hỏi
+  `Gửi N đánh giá lần trước? (y/n)`: `y` thì **chỉ gửi các đánh giá đó**, không phải đánh giá lại;
+  `n` thì giữ chúng `pending` và nhập đánh giá mới (chỉ gửi đánh giá mới).
+- Đánh giá được ghi `pending` vào `data\client\<device_id>\feedback_queue.jsonl` **trước**, rồi
+  gửi `POST /api/feedback` nếu server đang chạy. Server trả kết quả đánh giá (`positive`/
+  `neutral`/`negative`, thống kê của model); bản ghi chỉ thành `sent` khi server xác nhận.
+- Server tắt: giữ `pending`, không phải nhập lại. Gửi bù khi server mở lại:
+
+```cmd
+python -m client.feedback_cli --sync-pending --server http://127.0.0.1:8000
+```
+
+  (`client.agent` cũng tự gửi bù khi kết nối được server.) Mỗi đánh giá có `feedback_id` riêng nên
+  gửi lại nhiều lần server cũng chỉ ghi một lần (`data\feedback\manual-feedback-YYYYMMDD.jsonl`).
+
+### 6. Tóm tắt
+
+| Tình huống | Lệnh |
+|---|---|
+| Bật server | `uvicorn server.main:app --host 0.0.0.0 --port 8000` |
+| Có server, tải model lần đầu | `python -m client.agent --server http://<IP>:8000 --device-id laptopB --peer-port 0` |
+| Có server, chia sẻ model và chạy liên tục | `python -m client.agent --server http://<IP>:8000 --device-id laptopA --peer-port 9000 --serve` |
+| Không có server, nhận diện ảnh | `python -m client.detect --device-id laptopB` |
+| Gửi đánh giá lần detect gần nhất | `python -m client.feedback_cli --device-id laptopB --server http://<IP>:8000` |
+| Gửi bù đánh giá còn pending | `python -m client.feedback_cli --sync-pending --server http://<IP>:8000` |
+| Tải lại model từ đầu | `rmdir /s /q data\client\laptopB` rồi chạy lại `client.agent` |
+
+Hướng dẫn demo đầy đủ (các mức băng thông, P2P, fallback, nhận diện offline, hotspot, đọc log,
+lỗi hay gặp): **[docs/run_demo.md](docs/run_demo.md)**.
 
 Kiểm thử: `python -m pytest -q`.
 
@@ -186,7 +306,7 @@ Client sẽ tự đăng ký thông số thiết bị qua `/api/register`, xin mo
 | Thư mục | Nội dung |
 |---|---|
 | `server/` | FastAPI app, Registry, Selector, Planner, token bucket, feedback |
-| `client/` | Agent CLI, downloader, inference, peer service |
+| `client/` | Agent CLI, detect offline, chọn ảnh, theo dõi server, downloader, inference, peer |
 | `registry/`, `metadata/model_cards/`, `models/` | Registry sinh tự động, Model Card, file `.onnx` (không commit) |
 | `tools/` | Tải model, sinh Registry, tải nhãn/ảnh, kiểm file mẫu giao thức |
 | `docs/` | Giao thức, schema, gói mẫu, hướng dẫn demo, báo cáo triển khai |

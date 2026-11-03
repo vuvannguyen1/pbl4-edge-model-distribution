@@ -190,6 +190,39 @@ Phiên bản 1.0: server được phép luôn trả `continue`. Việc đổi ph
 
 Khi nhận `switch`, client gọi lại `/api/request` với `preferred_variant` = `new_variant_id`.
 
+### `POST /api/feedback` – đánh giá của người dùng
+
+Cùng endpoint, phân biệt bằng trường `feedback_id` (gói số đo ở trên không có trường này nên
+client cũ không bị ảnh hưởng). Gửi từ `client.feedback_cli`; không cần `request_id` còn hiệu lực
+hay đăng ký lại, vì client có thể gửi bù sau khi server khởi động lại.
+
+**Client gửi** (`examples/10_manual_feedback_request.json`)
+
+| Trường | Kiểu | Ý nghĩa |
+|---|---|---|
+| `feedback_id` | string | Mã duy nhất do client sinh (`fb-...`), dùng để chống ghi trùng khi gửi lại |
+| `device_id`, `variant_id` | string | Thiết bị và model được đánh giá |
+| `rating` | integer | Điểm 1 đến 5 |
+| `correct` | boolean | Dự đoán có đúng không |
+| `prediction`, `confidence` | string/number hoặc null | Dự đoán top-1 của lần detect và độ tự tin 0 đến 1 |
+| `expected_label` | string hoặc null | Nhãn thực tế nếu người dùng biết |
+| `comment` | string hoặc null | Nhận xét, tối đa 1000 ký tự |
+| `request_id`, `detected_at` | string hoặc null | Lần detect liên quan (null nếu detect offline) |
+| `created_at` | string | Thời điểm người dùng nhập (ISO 8601) |
+
+**Server trả về** – HTTP 200 (`examples/11_manual_feedback_response.json`)
+
+| Trường | Kiểu | Ý nghĩa |
+|---|---|---|
+| `ok` | boolean | `true`: server đã lưu; client chỉ đánh dấu `sent` khi nhận được |
+| `feedback_id` | string | Mã vừa nhận |
+| `status` | string | `accepted`: ghi mới. `duplicate`: đã nhận trước đó, không ghi lại |
+| `received_at` | string | Lúc server nhận lần đầu |
+| `evaluation` | object | `verdict` (`positive`/`neutral`/`negative`), `needs_review` (model có ≥ 5 lượt mà đúng < 50 %), thống kê của model và `reason` |
+
+Server ghi mỗi đánh giá một dòng trong `data/feedback/manual-feedback-YYYYMMDD.jsonl` và một
+dòng log (thời gian nhận, thiết bị, model, kết quả đánh giá).
+
 ## 6. Lỗi
 
 Mọi lỗi trả về cùng một dạng (`examples/09_error.json`):
@@ -242,3 +275,4 @@ Model Selector của Lực được gắn vào server qua một interface chung.
 |---|---|---|
 | 1.0 | 13/10/2026 | Bản đầu tiên cho task Implement |
 | 1.0 | 14/10/2026 | Sửa tài liệu, **không đổi định dạng tin nhắn**: server dùng Python FastAPI; danh mục model là Registry `registry/model_registry.json` thay cho `models/manifest.json`; `UNKNOWN_VARIANT` áp dụng cả với phiên bản chưa `ready`; cập nhật phân công |
+| 1.0 | 14/10/2026 | **Bổ sung, tương thích ngược**: `/api/feedback` nhận thêm đánh giá của người dùng (có `feedback_id`, mẫu 10 và 11); các tin nhắn cũ giữ nguyên |

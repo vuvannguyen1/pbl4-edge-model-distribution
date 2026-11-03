@@ -166,7 +166,68 @@ C in `[cảnh báo] miếng i: peer http://...: không kết nối được (...
 server, gửi các miếng lỗi trong `bad_chunks`, và vẫn hoàn tất với SHA-256 toàn file khớp.
 Sau đó server ghi `Ngừng giao peer ...` và không giao peer lỗi đó cho các lượt sau.
 
-## 6. Chạy qua hotspot hoặc Wi-Fi
+## 6. Nhận diện offline bằng model đã tải
+
+Model tải về nằm lại trên đĩa ở `data\client\<device_id>\<variant_id>\` (file `.onnx` và
+`variant.json`), kể cả sau khi tắt máy. `data\client\<device_id>\active.json` ghi model đang dùng.
+Chỉ cần chạy `client.agent` **một lần khi có server**; các lần sau nhận diện không cần server:
+
+```cmd
+python -m client.detect
+python -m client.detect --image samples\dog.jpg
+python -m client.detect --image samples\dog.jpg samples\cat.jpg
+python -m client.detect --image samples
+```
+
+- Bỏ `--image`: mở **hộp thoại chọn ảnh** trên máy (chọn được nhiều ảnh), nhận diện, rồi mở lại
+  hộp thoại cho ảnh tiếp theo; bấm **Cancel** để thoát. Model chỉ nạp một lần cho cả phiên. Máy
+  không mở được hộp thoại (Termux, SSH) thì gõ đường dẫn, hoặc kéo-thả file vào cửa sổ cmd.
+  `client.agent` cũng mở hộp thoại chọn một ảnh khi bỏ `--image`.
+- Nạp model một lần rồi nhận diện mọi ảnh (truyền nhiều file, hoặc thư mục ảnh .jpg .jpeg .png
+  .bmp .webp), in Top-5 và latency từng ảnh. Không gọi server.
+- Chỉ dùng model `complete` trong `variant.json`; kiểm kích thước và SHA-256 toàn file trước khi
+  dùng; file bị sửa/hỏng thì đánh `invalid`, từ chối và báo cần tải lại.
+- Chọn model: `--variant <id>` nếu có, rồi model trong `active.json`, rồi model top-1 cao nhất
+  trong cache.
+- Chọn cache: `--cache-dir`, rồi `--device-id`; bỏ trống thì dùng thư mục thiết bị duy nhất trong
+  `data\client\` (có nhiều thì phải chọn bằng `--device-id`).
+
+`client.agent` cũng ưu tiên model trên máy: kho đã có model `complete` đúng SHA-256 thì không
+gửi `/api/request` (in `Model có sẵn trên máy`), kể cả khi server đang chạy; `--refresh` buộc hỏi
+server. Không kết nối được server thì in `Chuyển sang chế độ offline`, chạy suy luận bằng model có
+sẵn và bỏ qua feedback tự động (`HOÀN TẤT (offline): ...`). Cache chưa có model thì báo chưa thể
+detect offline và cần chạy lại khi có kết nối server.
+
+Sau khi đăng ký, `client.agent` theo dõi kết nối tới server (thử mở kết nối TCP mỗi 3 s, không
+gửi request nên không sinh log phía server). Server đóng hoặc mạng bị ngắt thì client in
+`[giờ] MẤT KẾT NỐI tới server ...`, server mở lại thì in `Đã kết nối lại server ...`. Hữu ích
+nhất khi chạy `--serve` (client chạy lâu). Mất kết nối giữa lúc đang tải/gửi thì client dừng với
+`[MẤT KẾT NỐI] ...`.
+
+Demo: chạy `client.agent ... --serve` như mục 3, bấm Ctrl+C tắt server (client báo mất kết nối),
+rồi chạy `client.detect`.
+
+### Gửi đánh giá, kể cả khi server tắt
+
+```cmd
+python -m client.feedback_cli --device-id laptopB --server http://127.0.0.1:8000
+```
+
+CLI hỏi điểm 1-5, dự đoán của lần detect gần nhất có đúng không, nhãn thực tế và nhận xét (Enter
+bỏ trống ở câu điểm hoặc đúng/sai là thoát, không lưu). Nếu còn đánh giá `pending` từ lần trước và
+server đang chạy, CLI hỏi `Gửi N đánh giá lần trước? (y/n)`: `y` chỉ gửi các đánh giá đó, `n` giữ
+chúng và nhập đánh giá mới. Đánh
+giá được ghi `pending` vào `data\client\laptopB\feedback_queue.jsonl` rồi gửi ngay nếu server
+chạy (server in `Feedback thủ công fb-... -> positive/negative ...`). Demo offline: tắt server,
+chạy lệnh trên (client báo giữ `pending`), bật lại server rồi chạy:
+
+```cmd
+python -m client.feedback_cli --sync-pending --server http://127.0.0.1:8000
+```
+
+Bản ghi chuyển `sent` sau khi server xác nhận; chạy lại lệnh không gửi trùng.
+
+## 7. Chạy qua hotspot hoặc Wi-Fi
 
 1. Bật Mobile Hotspot trên laptop chạy server. IP của laptop thường là `192.168.137.1`
    (xem bằng `ipconfig`).
@@ -190,7 +251,7 @@ python -m client.agent --server http://192.168.137.1:8000 --device-id laptopB --
 - Nếu URL trong plan bị sai host (ví dụ đi qua NAT), đặt
   `set PBL4_PUBLIC_BASE_URL=http://192.168.137.1:8000` trước khi chạy server.
 
-## 7. Đọc log
+## 8. Đọc log
 
 - Log server: console và `data\logs\server-YYYYMMDD.log`. Mỗi dòng của một lượt xin model bắt
   đầu bằng `[r-0001]`: ứng viên, bị loại vì sao, Selector chọn gì, plan theo nguồn, tiến độ
@@ -205,7 +266,7 @@ findstr "r-0003" data\logs\server-20261014.log
   `selector_reason`, `decision`, `data_kind`.
 - Model client đã tải: `data\client\<device_id>\<variant_id>\`.
 
-## 8. Lỗi hay gặp
+## 9. Lỗi hay gặp
 
 | Hiện tượng | Nguyên nhân | Cách xử lý |
 |---|---|---|
@@ -215,7 +276,7 @@ findstr "r-0003" data\logs\server-20261014.log
 | `Thiếu file nhãn` | Chưa có `samples\imagenet_synset.txt` | `python tools\download_assets.py` |
 | Server báo `4 variant, 0 ready` hoặc thiếu file | Chưa tải model / chưa sinh Registry | `python tools\download_models.py` rồi `python tools\build_registry.py` |
 | Client nhận `INTERNAL: File model trên server không khớp Registry` | File `.onnx` đổi sau khi sinh Registry | Chạy lại `python tools\build_registry.py` (server tự nạp lại Registry) |
-| Máy khác không kết nối được server | Firewall hoặc sai IP | Mở firewall (mục 6), kiểm tra `ipconfig`, thử `curl http://192.168.137.1:8000/api/probe?size_kb=16 -o NUL` |
+| Máy khác không kết nối được server | Firewall hoặc sai IP | Mở firewall (mục 7), kiểm tra `ipconfig`, thử `curl http://192.168.137.1:8000/api/probe?size_kb=16 -o NUL` |
 | P2P luôn fallback | AP isolation, firewall cổng peer, hoặc peer đã tắt | Bình thường với mạng chặn P2P; mở firewall cổng peer, dùng hotspot laptop |
 | Chữ tiếng Việt lỗi trong cmd | Code page cũ | `chcp 65001` |
 | Tải chậm bất thường với `localhost` | Windows thử IPv6 trước | Client đã tự đổi `localhost` thành `127.0.0.1`; có thể dùng thẳng `http://127.0.0.1:8000` |

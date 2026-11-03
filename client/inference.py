@@ -1,5 +1,8 @@
 """Chạy model ONNX phân loại ảnh: tiền xử lý, Top-5, đo load/latency/RAM.
 
+`Classifier` nạp model một lần rồi phân loại nhiều ảnh; `run_inference` là
+cách gọi gọn cho một ảnh.
+
 Tiền xử lý lấy từ khối `variant` (input_shape, input_dtype, normalize):
 RGB -> resize cạnh ngắn (bilinear, giữ tỉ lệ) -> cắt giữa -> /255 -> chuẩn hóa
 mean/std -> NCHW float32 có chiều batch. Với ảnh 224x224, cạnh ngắn resize về 256.
@@ -134,6 +137,46 @@ def peak_ram_mb() -> float | None:
         return None
 
 
+class Classifier:
+    """Nạp model ONNX một lần rồi phân loại nhiều ảnh (warm-up chỉ ở ảnh đầu tiên)."""
+
+    def __init__(self, model_path: Path, variant: dict[str, Any], labels: list[str]) -> None:
+        import onnxruntime as ort
+
+        start = time.perf_counter()
+        self.session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
+        self.load_ms = (time.perf_counter() - start) * 1000
+        # mobilenetv2: "input", resnet50: "data"
+        self.input_name = self.session.get_inputs()[0].name
+        self.variant = variant
+        self.labels = labels
+        self._warmed_up = False
+
+    def classify(self, image_path: Path, runs: int = 20) -> InferenceResult:
+        feeds = {self.input_name: preprocess(image_path, self.variant)}
+        if not self._warmed_up:
+            for _ in range(WARMUP_RUNS):
+                self.session.run(None, feeds)
+            self._warmed_up = True
+        latencies: list[float] = []
+        outputs: list[Any] = []
+        for _ in range(max(1, runs)):
+            t0 = time.perf_counter()
+            outputs = self.session.run(None, feeds)
+            latencies.append((time.perf_counter() - t0) * 1000)
+
+        logits = np.asarray(outputs[0], dtype=np.float32).reshape(-1)
+        probabilities = softmax(logits)
+        return InferenceResult(
+            input_name=self.input_name,
+            load_ms=self.load_ms,
+            latency_ms_median=statistics.median(latencies),
+            runs=len(latencies),
+            peak_ram_mb=peak_ram_mb(),
+            top5=top_k(probabilities, self.labels, 5),
+        )
+
+
 def run_inference(
     model_path: Path,
     image_path: Path,
@@ -141,32 +184,15 @@ def run_inference(
     labels: list[str],
     runs: int = 20,
 ) -> InferenceResult:
-    import onnxruntime as ort
+    return Classifier(model_path, variant, labels).classify(image_path, runs)
 
-    start = time.perf_counter()
-    session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
-    load_ms = (time.perf_counter() - start) * 1000
 
-    input_name = session.get_inputs()[0].name  # mobilenetv2: "input", resnet50: "data"
-    tensor = preprocess(image_path, variant)
-    feeds = {input_name: tensor}
-
-    for _ in range(WARMUP_RUNS):
-        session.run(None, feeds)
-    latencies: list[float] = []
-    outputs: list[Any] = []
-    for _ in range(max(1, runs)):
-        t0 = time.perf_counter()
-        outputs = session.run(None, feeds)
-        latencies.append((time.perf_counter() - t0) * 1000)
-
-    logits = np.asarray(outputs[0], dtype=np.float32).reshape(-1)
-    probabilities = softmax(logits)
-    return InferenceResult(
-        input_name=input_name,
-        load_ms=load_ms,
-        latency_ms_median=statistics.median(latencies),
-        runs=len(latencies),
-        peak_ram_mb=peak_ram_mb(),
-        top5=top_k(probabilities, labels, 5),
-    )
+def format_top5(top5: list[Prediction]) -> list[str]:
+    """Bảng Top-5 để in ra console (dùng chung cho agent và detect)."""
+    lines = [
+        "   #  Nhãn                              Xác suất",
+        "  ──  ────────────────────────────────  ────────",
+    ]
+    for rank, pred in enumerate(top5, start=1):
+        lines.append(f"  {rank:>2}  {pred.label[:32]:<32}  {pred.probability * 100:7.2f} %")
+    return lines
