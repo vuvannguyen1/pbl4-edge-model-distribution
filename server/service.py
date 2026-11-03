@@ -304,7 +304,13 @@ class DistributionService:
         ]
         log += [f"Loại {r.variant_id}: {r.reason}" for r in rejections]
         if not candidates:
-            message = no_fit_message(context, rejections)
+            if ready:
+                message = no_fit_message(context, rejections)
+            else:
+                message = (
+                    "Server chưa có model nào sẵn sàng phân phối: Registry trống, không đọc được "
+                    "hoặc mọi bản đều đã tắt. Kiểm tra trang Registry model trên dashboard."
+                )
             rid = self.state.reserve_request_id()
             for line in log:
                 logger.info("[%s] %s", rid, line)

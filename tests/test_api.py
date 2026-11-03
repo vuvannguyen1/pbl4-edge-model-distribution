@@ -161,6 +161,16 @@ def test_request_bandwidth_too_low_is_422(client: TestClient) -> None:
     assert "60 giây" in message and "100 kbps" in message
 
 
+def test_request_empty_registry_says_so(app_factory, tmp_path) -> None:
+    # Quên copy registry vào data_demo: server vẫn chạy với 0 variant, client phải biết vì sao.
+    app = app_factory(registry_path=tmp_path / "khong_co.json")
+    with TestClient(app) as client:
+        register(client)
+        resp = request_model(client, bandwidth_kbps=2000, deadline_s=60)
+    assert_error(resp, 422, "NO_VARIANT_FITS")
+    assert "chưa có model nào sẵn sàng" in resp.json()["error"]["message"]
+
+
 def test_request_extra_field_is_400(client: TestClient) -> None:
     register(client)
     assert_error(request_model(client, ip="1.2.3.4"), 400, "BAD_REQUEST")
