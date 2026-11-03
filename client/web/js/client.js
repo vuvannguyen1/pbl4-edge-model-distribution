@@ -3,10 +3,15 @@
 import { ApiError, Poller, api, badge, clear, emptyState, fmt, h, icon, toast } from "/shared/js/ui.js";
 
 const $ = (id) => document.getElementById(id);
-const SOURCE_TEXT = {
-  server: ["info", "Vừa xin và tải từ server"],
-  cache: ["success", "Dùng model có sẵn trên máy"],
-};
+// Nguồn model của lượt nhận diện: đếm miếng thật sự nhận từ peer và từ server.
+function sourceBadge(r) {
+  if (r.offline) return badge("warning", "Offline: dùng model có sẵn trên máy");
+  if (r.source === "cache") return badge("success", "Dùng model có sẵn trên máy");
+  const d = r.download;
+  if (r.source !== "server" || !d) return badge("neutral", r.source);
+  if (d.chunks_from_peer) return badge("success", `Vừa tải: ${d.chunks_from_peer} miếng từ peer, ${d.chunks_from_server} từ server`, "share-network");
+  return badge("info", `Vừa tải: ${d.chunks_from_server} miếng từ server`);
+}
 const STATUS_KIND = { complete: "success", partial: "warning", invalid: "danger" };
 const FEEDBACK_STATUS = {
   sent: ["success", "Đã gửi"],
@@ -26,7 +31,7 @@ function renderConn(s) {
   document.title = `${s.device_id} · PBL4 Client`;
   const parts = [
     s.server_online
-      ? badge("success", "Server đang kết nối", "cloud-check")
+      ? badge("success", "Đã kết nối server", "cloud-check")
       : badge("danger", "Không kết nối được server", "cloud-slash"),
   ];
   if (s.pending_feedback) parts.push(badge("warning", `${s.pending_feedback} đánh giá chờ gửi`, "hourglass"));
@@ -66,7 +71,7 @@ function renderModels(s) {
           badge(STATUS_KIND[m.status] || "neutral", m.status),
           m.active ? h("span", { class: "tag" }, "đang dùng") : null,
           h("span", { class: "small muted" }, [m.precision, m.size_bytes ? fmt.mb(m.size_bytes) : null, m.top1_accuracy ? `top-1 ${fmt.pct(m.top1_accuracy)}` : null].filter(Boolean).join(" · ")),
-          m.reason ? h("span", { class: "small muted" }, m.reason) : null,
+          m.reason ? h("span", { class: "small muted" }, fmt.text(m.reason)) : null,
         ),
       ),
     ),
@@ -263,7 +268,6 @@ function renderProgress(job, logBox) {
 }
 
 function renderResult(r) {
-  const [kind, text] = r.offline ? ["warning", "Offline: dùng model có sẵn trên máy"] : SOURCE_TEXT[r.source] || ["neutral", r.source];
   const row = (label, value) => [h("dt", {}, label), h("dd", {}, value)];
   const top = r.top5[0];
   clear(
@@ -292,7 +296,7 @@ function renderResult(r) {
         "dl",
         { class: "dl-grid" },
         row("Model", h("span", { class: "mono" }, r.variant.id)),
-        row("Nguồn model", badge(kind, text)),
+        row("Nguồn model", sourceBadge(r)),
         r.request_id ? row("Request", h("span", { class: "mono" }, r.request_id)) : null,
         row("Latency (trung vị)", `${fmt.ms(r.latency_ms_median)} · ${r.runs} lần`),
         row("Nạp model", fmt.ms(r.load_ms)),
@@ -303,7 +307,7 @@ function renderResult(r) {
         r.decision
           ? row("Server quyết định", r.decision.action === "switch" ? badge("warning", `Đổi sang ${r.decision.new_variant_id}`) : badge("success", "Giữ model này"))
           : null,
-        r.decision?.reason ? row("Lý do", h("span", { class: "small" }, r.decision.reason)) : null,
+        r.decision?.reason ? row("Lý do", h("span", { class: "small" }, fmt.text(r.decision.reason))) : null,
       ),
     ),
   );
@@ -507,7 +511,7 @@ function renderFeedback() {
           "div",
           { class: "result-box stack" },
           h("p", { class: "row" }, badge(kind, text), verdict ? badge(verdict[0], verdict[1]) : null),
-          resp.evaluation ? h("p", {}, resp.evaluation.reason) : null,
+          resp.evaluation ? h("p", {}, fmt.text(resp.evaluation.reason)) : null,
           resp.message ? h("p", {}, resp.message) : null,
         ),
       );

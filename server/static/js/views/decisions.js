@@ -32,13 +32,13 @@ function decisionCard(r) {
       { class: "small muted" },
       `${fmt.time(r.created_at)} · lớp ${r.device_class || "?"} · băng thông ${bandwidthText(r)} · hạn ${fmt.s(r.deadline_s)} · tải ước tính ${fmt.s(r.estimated_download_s)} · plan: ${sourceSplit(r.plan_counts)}`,
     ),
-    h("p", { class: "reason" }, r.reason),
+    h("p", { class: "reason" }, fmt.text(r.reason)),
     r.decision_log.length
       ? h(
           "details",
           { class: "disclosure" },
           h("summary", {}, icon("caret-right"), `Các bước lọc ứng viên (${r.decision_log.length})`),
-          h("ol", { class: "decision-log" }, r.decision_log.map((line) => h("li", {}, line))),
+          h("ol", { class: "decision-log" }, r.decision_log.map((line) => h("li", {}, fmt.text(line)))),
         )
       : null,
   );
@@ -188,7 +188,7 @@ function tryForm(onDone) {
           "div",
           { class: "result-box stack" },
           h("p", { class: "row" }, badge("success", "Server đã chọn"), variantLink(resp.variant.id), requestLink(resp.request_id)),
-          h("p", {}, resp.reason),
+          h("p", {}, fmt.text(resp.reason)),
           h("p", { class: "small muted" }, `${fmt.mb(resp.variant.size_bytes)} · ${resp.variant.chunk_count} miếng · tải ước tính ${fmt.s(resp.estimated_download_s)} · plan: ${sourceSplit(counts)}`),
         ),
       );

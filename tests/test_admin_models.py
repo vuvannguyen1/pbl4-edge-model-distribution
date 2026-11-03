@@ -15,7 +15,7 @@ BIG = 3_000_000  # 3 miếng
 SMALL = 1_500_000  # 2 miếng
 
 
-def register(client: TestClient, device_id: str) -> None:
+def register(client: TestClient, device_id: str, peer_port: int | None = None) -> None:
     resp = client.post(
         "/api/register",
         json={
@@ -25,7 +25,7 @@ def register(client: TestClient, device_id: str) -> None:
             "cpu_arch": "AMD64",
             "ram_mb": 8192,
             "runtime": "onnxruntime 1.31.0",
-            "peer_port": None,
+            "peer_port": peer_port,
         },
     )
     assert resp.status_code == 200, resp.text
@@ -160,6 +160,7 @@ def test_cannot_disable_last_ready_variant(two_variants) -> None:
     assert set_status(client, "small_int8", "disabled").status_code == 200
     resp = set_status(client, "big_fp32", "retired")
     assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "CONFLICT"
     assert "cuối cùng" in resp.json()["error"]["message"]
     assert registry_status(registry_path, "big_fp32") == "ready"
 
@@ -200,3 +201,86 @@ def test_user_feedback_written_to_settings_data_dir(app_factory, tmp_path: Path)
     log = tmp_path / "data" / "user_feedbacks.jsonl"
     assert log.is_file()
     assert json.loads(log.read_text(encoding="utf-8").splitlines()[-1])["device_id"] == "laptopA"
+
+
+def test_json_responses_declare_utf8_charset(two_variants) -> None:
+    client, _ = two_variants
+    for path in ("/admin-api/summary", "/admin-api/variants/khong_co"):
+        assert client.get(path).headers["content-type"] == "application/json; charset=utf-8", path
+    resp = client.post("/api/request", json={"device_id": "chua_dang_ky"})
+    assert resp.headers["content-type"] == "application/json; charset=utf-8"
+
+
+def test_heartbeat_keeps_device_active(two_variants, monkeypatch) -> None:
+    import server.admin_api as admin_api
+
+    client, _ = two_variants
+    assert client.post("/admin-api/devices/khong_co/heartbeat").status_code == 404
+    register(client, "laptopB")
+    resp = client.post("/admin-api/devices/laptopB/heartbeat")
+    assert resp.status_code == 200 and resp.json()["last_seen"]
+    assert client.get("/admin-api/summary").json()["devices"]["active"] == 1
+    monkeypatch.setattr(admin_api, "ACTIVE_WITHIN_S", -1)  # coi như đã im lặng quá lâu
+    assert client.get("/admin-api/summary").json()["devices"]["active"] == 0
+
+
+def test_sharing_peer_counts_as_active(two_variants, monkeypatch) -> None:
+    import server.admin_api as admin_api
+
+    client, _ = two_variants
+    register(client, "laptopA", peer_port=9000)
+    first = ask(client, "laptopA").json()
+    done = client.post(
+        "/api/have",
+        json={
+            "request_id": first["request_id"],
+            "device_id": "laptopA",
+            "variant_id": first["variant"]["id"],
+            "chunks": list(range(first["variant"]["chunk_count"])),
+            "bad_chunks": [],
+            "bandwidth_kbps": None,
+            "complete": True,
+        },
+    )
+    assert done.status_code == 200, done.text
+    monkeypatch.setattr(admin_api, "ACTIVE_WITHIN_S", -1)
+    devices = client.get("/admin-api/summary").json()["devices"]
+    # không còn cảnh "0 thiết bị hoạt động" cạnh "1 peer đang chia sẻ"
+    assert devices["sharing_peers"] == 1 and devices["active"] == 1
+    row = client.get("/admin-api/devices").json()["devices"][0]
+    assert row["sharing"] is True and row["active"] is True
+
+
+def test_feedback_stats_breakdown_matches_jsonl(two_variants) -> None:
+    client, _ = two_variants
+    empty = client.get("/admin-api/feedback-stats").json()
+    assert empty["average_latency_ms"] is None  # chưa có số đo: không báo 0 ms
+    assert empty["jsonl"] == {"metrics": 0, "manual": 0, "text": 0}
+
+    register(client, "laptopA")
+    resp = client.post(
+        "/api/feedback",
+        json={
+            "feedback_id": "fb-0001",
+            "device_id": "laptopA",
+            "variant_id": "big_fp32",
+            "rating": 4,
+            "correct": True,
+            "prediction": "tiger cat",
+            "confidence": 0.61,
+            "expected_label": "tiger cat",
+            "comment": "đúng",
+            "request_id": None,
+            "detected_at": None,
+            "created_at": "2026-11-03T08:00:00Z",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    resp = client.post("/api/user-feedback", json={"device_id": "laptopA", "feedback_text": "ổn"})
+    assert resp.status_code == 200, resp.text
+
+    stats = client.get("/admin-api/feedback-stats").json()
+    assert stats["manual_feedback_count"] == stats["jsonl"]["manual"] == 1
+    assert stats["text_feedback_count"] == stats["jsonl"]["text"] == 1
+    assert stats["user_feedback_count"] == 2
+    assert stats["performance_feedback_count"] == stats["jsonl"]["metrics"] == 0

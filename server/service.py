@@ -520,7 +520,7 @@ class DistributionService:
                     reason=decision.reason,
                 )
         except Exception as exc:
-            logger.debug("[%s] Không thể lưu feedback vào CSDL: %s", rid, exc)
+            logger.warning("[%s] Không thể lưu feedback vào CSDL: %s", rid, exc)
         return FeedbackResponse(
             action=decision.action,
             new_variant_id=decision.new_variant_id,
@@ -597,7 +597,7 @@ class DistributionService:
                     actual_label=req.expected_label,
                 )
         except Exception as exc:
-            logger.debug("[%s] Không thể lưu manual feedback vào CSDL: %s", req.feedback_id, exc)
+            logger.warning("[%s] Không thể lưu manual feedback vào CSDL: %s", req.feedback_id, exc)
         return ManualFeedbackResponse(
             feedback_id=req.feedback_id,
             status="duplicate" if duplicate else "accepted",

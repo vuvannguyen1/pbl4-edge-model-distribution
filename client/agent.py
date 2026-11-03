@@ -414,7 +414,10 @@ class Agent:
     def start_monitor(self) -> None:
         if self.monitor is None:
             self.monitor = ServerMonitor(
-                self.api.server_url, out=self.out, on_reconnect=self.sync_feedback
+                self.api.server_url,
+                out=self.out,
+                on_reconnect=self.sync_feedback,
+                heartbeat=lambda: self.api.heartbeat(self.config.device_id),
             )
             self.monitor.start()
 

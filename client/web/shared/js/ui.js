@@ -58,7 +58,7 @@ export const fmt = {
   num: (v, digits = 1) =>
     v === null || v === undefined || Number.isNaN(v) ? "—" : (digits === 2 ? NF2 : NF).format(v),
   int: (v) => (v === null || v === undefined ? "—" : Math.round(v).toLocaleString("vi-VN")),
-  mb: (bytes) => (bytes == null ? "—" : `${NF2.format(bytes / 1048576)} MB`),
+  mb: (bytes) => (bytes == null ? "—" : `${NF.format(bytes / 1048576)} MB`),
   kbps: (v) => (v ? `${NF.format(v)} kbps` : "—"),
   ms: (v) => (v == null ? "—" : `${NF.format(v)} ms`),
   s: (v) => (v == null ? "—" : `${NF.format(v)} s`),
@@ -76,6 +76,13 @@ export const fmt = {
     return `${Math.round(seconds / 3600)} giờ trước`;
   },
   short: (hash, n = 12) => (hash ? `${hash.slice(0, n)}…` : "—"),
+  // Câu do server viết ("5.48 ms", "top-1 0.7180") -> cùng kiểu vi-VN với phần còn lại: "5,5 ms", "top-1 71,8 %".
+  text(s) {
+    if (s == null) return "";
+    return String(s)
+      .replace(/top-1 ([01]\.\d+)(?![\w.])/g, (_, v) => `top-1 ${fmt.pct(Number(v))}`)
+      .replace(/(?<![\w.,])\d+\.\d+(?![\w.])/g, (v) => NF.format(Number(v)));
+  },
 };
 
 // ---------------------------------------------------------------- badge, trạng thái

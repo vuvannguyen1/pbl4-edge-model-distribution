@@ -248,7 +248,7 @@ function feedbackForm(onDone) {
           "div",
           { class: "result-box stack" },
           h("p", { class: "row" }, badge("success", "Server đã nhận"), badge(kind, label), resp.evaluation.needs_review ? badge("warning", "Cần xem lại variant") : null),
-          h("p", {}, resp.evaluation.reason),
+          h("p", {}, fmt.text(resp.evaluation.reason)),
           h("p", { class: "small muted mono" }, resp.feedback_id),
         ),
       );

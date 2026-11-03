@@ -9,7 +9,7 @@ from __future__ import annotations
 import time
 from collections.abc import Iterable, Sequence
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import requests
 
@@ -229,6 +229,14 @@ class ApiClient:
 
     def feedback(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._post("/api/feedback", payload)
+
+    def heartbeat(self, device_id: str, timeout_s: float = 2.0) -> bool:
+        """Báo server máy này còn chạy (dashboard tính là đang hoạt động). Không ném lỗi."""
+        url = f"{self.server_url}/admin-api/devices/{quote(device_id, safe='')}/heartbeat"
+        try:
+            return self.session.post(url, timeout=timeout_s).status_code == 200
+        except requests.RequestException:
+            return False
 
     def submit_feedback(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Gửi đánh giá thủ công (`build_manual_feedback`), cùng endpoint `/api/feedback`."""

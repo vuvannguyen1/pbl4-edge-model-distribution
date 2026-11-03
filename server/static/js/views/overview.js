@@ -32,7 +32,7 @@ function renderKpis(s) {
       "devices",
       "Thiết bị đã đăng ký",
       fmt.int(s.devices.registered),
-      `${s.devices.active} đang hoạt động (≤ 30 giây)`,
+      s.devices.registered ? `${fmt.int(s.devices.active)} đang hoạt động (liên lạc ≤ 30 giây hoặc đang chia sẻ)` : "Chưa có thiết bị nào",
     ),
     kpi("share-network", "Peer đang chia sẻ", fmt.int(s.devices.sharing_peers), "có model đủ + mở cổng peer"),
     kpi(
@@ -90,7 +90,7 @@ function renderAlerts(s) {
     "ul",
     { class: "alert-list" },
     s.alerts.map((a) =>
-      h("li", { class: `is-${a.level}` }, icon(a.level === "danger" ? "x-circle" : "warning"), a.message),
+      h("li", { class: `is-${a.level}` }, icon(a.level === "danger" ? "x-circle" : "warning"), fmt.text(a.message)),
     ),
   );
 }

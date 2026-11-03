@@ -64,6 +64,7 @@ SAMPLES_DIR = REPO_ROOT / "samples"
 IMAGE_TYPES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 REACHABLE_TTL_S = 2.0
+HEARTBEAT_EVERY_S = 10.0  # trang đang mở thì báo server máy này còn chạy
 HISTORY_LIMIT = 20
 
 # Dòng agent/downloader in ra: "  [  5/14] miếng   4 ← peer ..." và "══ [5/7] Tải model ═══"
@@ -199,6 +200,7 @@ class ClientWebApp:
         self._counter = 0
         self._peer_agent: Agent | None = None  # agent đang giữ peer service sau lượt cuối
         self._reachable: tuple[float, bool] = (0.0, False)
+        self._last_beat = 0.0
 
     # ------------------------------------------------------------ đọc trạng thái
 
@@ -208,6 +210,18 @@ class ClientWebApp:
             value = server_reachable(self.server, timeout_s=1.0)
             self._reachable = (time.monotonic(), value)
         return value
+
+    def _heartbeat(self) -> None:
+        """Gọi theo nhịp hỏi /api/state của trang: luồng nền, không làm chậm giao diện."""
+        if time.monotonic() - self._last_beat < HEARTBEAT_EVERY_S:
+            return
+        self._last_beat = time.monotonic()
+        threading.Thread(
+            target=ApiClient(self.server).heartbeat,
+            args=(self.config.device_id,),
+            name="heartbeat",
+            daemon=True,
+        ).start()
 
     def models(self) -> list[dict[str, Any]]:
         active = load_active(self.config.cache_dir)
@@ -232,10 +246,13 @@ class ClientWebApp:
         holder = self._peer_agent
         service = holder.peer_service if holder else None
         current = self._current
+        online = self.server_online()
+        if online:
+            self._heartbeat()
         return {
             "device_id": self.config.device_id,
             "server": self.server,
-            "server_online": self.server_online(),
+            "server_online": online,
             "device": {
                 "platform": self.device.platform,
                 "cpu_arch": self.device.cpu_arch,

@@ -19,7 +19,8 @@ from typing import Any, TypeVar
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import JSONResponse as _BaseJSONResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -115,6 +116,12 @@ def setup_logging(logs_dir: Path) -> None:
 
 
 # ---------------------------------------------------------------- helper HTTP
+
+
+class JSONResponse(_BaseJSONResponse):
+    """JSON kèm `charset=utf-8`: PowerShell 5.1 và vài client không tự đoán UTF-8, đọc sai dấu."""
+
+    media_type = "application/json; charset=utf-8"
 
 
 def _json(model: BaseModel, status_code: int = 200) -> JSONResponse:
@@ -214,6 +221,7 @@ def create_app(settings: Settings | None = None, selector: ModelSelector | None 
         title="PBL4 Edge Model Distribution",
         version=PROTOCOL_VERSION,
         description="Server phân phối model ONNX theo docs/protocol.md (Protocol 1.0).",
+        default_response_class=JSONResponse,
     )
     app.state.settings = settings
     app.state.service = service

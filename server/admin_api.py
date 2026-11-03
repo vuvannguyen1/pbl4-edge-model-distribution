@@ -37,7 +37,7 @@ from server.db import (
     get_session_factory,
     sync_registry_to_db,
 )
-from server.errors import ProtocolError, bad_request, unknown_variant
+from server.errors import ProtocolError, bad_request, unknown_device, unknown_variant
 from server.ingestion import IngestionError, ingest_model
 from server.registry import READY, write_text_atomic
 from server.service import DistributionService
@@ -53,6 +53,7 @@ MAX_LIMIT = 1000
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 # request chưa xong mà quá lâu không báo tiến độ thì cảnh báo trên dashboard
 STALLED_AFTER_S = 60
+ACTIVE_WITHIN_S = 30  # liên lạc gần đây (API hoặc heartbeat) thì tính là đang hoạt động
 _LOG_LINE = re.compile(r"^(\d{2}:\d{2}:\d{2}) (DEBUG|INFO|WARNING|ERROR|CRITICAL)\s+(.*)$")
 _REQUEST_ID = re.compile(r"\[(r-\d+)\]")
 
@@ -142,6 +143,25 @@ def _model_card(variant_id: str) -> dict[str, Any] | None:
         return None
 
 
+def _sharing_ids(service: DistributionService) -> set[str]:
+    """Thiết bị server đang dùng làm peer: mở cổng peer, có variant đủ, chưa bị cấm."""
+    complete = {dev for dev, _ in service.state.complete_pairs()}
+    banned = set(service.state.banned_origins())
+    return {
+        d.device_id
+        for d in service.devices.all()
+        if d.peer_origin and d.peer_origin not in banned and d.device_id in complete
+    }
+
+
+def _is_active(
+    service: DistributionService, device_id: str, sharing: set[str], now: datetime
+) -> bool:
+    """Liên lạc trong ACTIVE_WITHIN_S giây, hoặc đang phục vụ peer (máy khác có thể tải từ nó)."""
+    age = _age_s(service.devices.last_seen(device_id), now)
+    return device_id in sharing or (age is not None and age <= ACTIVE_WITHIN_S)
+
+
 def _plan_counts(record: DownloadRequest) -> dict[str, int]:
     counts = {"server": 0, "peer": 0, "server_received": 0, "peer_received": 0}
     for item in record.plan:
@@ -200,18 +220,8 @@ def summary(request: Request) -> dict[str, Any]:
         by_status[status] = by_status.get(status, 0) + 1
 
     devices = service.devices.all()
-    complete_pairs = service.state.complete_pairs()
-    banned = set(service.state.banned_origins())
-    sharing = {
-        d.device_id
-        for d in devices
-        if d.peer_origin
-        and d.peer_origin not in banned
-        and any(dev == d.device_id for dev, _ in complete_pairs)
-    }
-    active = [
-        d for d in devices if (_age_s(service.devices.last_seen(d.device_id), now) or 1e9) <= 30
-    ]
+    sharing = _sharing_ids(service)
+    active = [d for d in devices if _is_active(service, d.device_id, sharing, now)]
 
     records = service.state.requests_snapshot()
     statuses: dict[str, int] = {}
@@ -314,6 +324,7 @@ def devices(request: Request) -> dict[str, Any]:
     service, now = _service(request), _now()
     complete_pairs = service.state.complete_pairs()
     banned = set(service.state.banned_origins())
+    sharing = _sharing_ids(service)
     class_variants = service.state.class_variants()
     records = service.state.requests_snapshot()
     items = []
@@ -329,14 +340,25 @@ def devices(request: Request) -> dict[str, Any]:
                 "last_seen_age_s": _age_s(last_seen, now),
                 "complete_variants": complete,
                 "peer_banned": device.peer_origin in banned if device.peer_origin else False,
-                "sharing": bool(device.peer_origin and complete)
-                and device.peer_origin not in banned,
+                "sharing": device.device_id in sharing,
+                "active": _is_active(service, device.device_id, sharing, now),
                 "request_count": len(own),
                 "last_request_id": own[-1].request_id if own else None,
                 "class_variant": class_variants.get(device.device_class),
             }
         )
     return {"now": now.isoformat(timespec="seconds"), "devices": items}
+
+
+@router.post("/devices/{device_id}/heartbeat")
+def heartbeat(device_id: str, request: Request) -> dict[str, Any]:
+    """Client đang chạy (web_ui mở, agent --serve) báo còn sống; không thuộc protocol 1.0."""
+    service = _service(request)
+    if service.devices.get(device_id) is None:
+        raise unknown_device(device_id)
+    service.devices.touch(device_id)
+    last_seen = service.devices.last_seen(device_id)
+    return {"status": "ok", "device_id": device_id, "last_seen": last_seen}
 
 
 # ---------------------------------------------------------------- Registry
@@ -455,14 +477,37 @@ def _db_error(exc: Exception) -> ProtocolError:
     return ProtocolError("INTERNAL", "Không đọc được CSDL, xem log server.")
 
 
+def _count_jsonl(paths: Iterable[Path]) -> int:
+    total = 0
+    for path in paths:
+        try:
+            total += sum(
+                1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+            )
+        except OSError:
+            continue
+    return total
+
+
 @router.get("/feedback-stats")
-def feedback_stats() -> dict[str, Any]:
-    """Thống kê feedback đã lưu trong CSDL (số đo của agent và nhận xét người dùng)."""
+def feedback_stats(request: Request) -> dict[str, Any]:
+    """Thống kê feedback trong CSDL, kèm số dòng JSONL cùng loại để đối chiếu.
+
+    CSDL: `performance_feedback_count` ↔ JSONL `metrics`; `manual_feedback_count` ↔ `manual`;
+    `text_feedback_count` ↔ `text`. Lệch nhau khi một lần ghi CSDL thất bại (xem log)
+    hoặc khi CSDL và JSONL không cùng PBL4_DATA_DIR.
+    """
+    settings = _settings(request)
     try:
         with get_session_factory()() as session:
-            return get_feedback_statistics(session)
+            stats = get_feedback_statistics(session)
     except Exception as exc:
         raise _db_error(exc) from exc
+    stats["jsonl"] = {
+        kind: _count_jsonl(_feedback_paths(settings, kind))
+        for kind in ("metrics", "manual", "text")
+    }
+    return stats
 
 
 @router.get("/models")
@@ -513,10 +558,9 @@ def _apply_status(
     ready_ids = {v.variant_id for v in service.registry.ready_variants()}
     if new_status != READY and ready_ids == {variant_id}:
         raise ProtocolError(
-            "BAD_REQUEST",
+            "CONFLICT",
             f"{variant_id} là variant ready cuối cùng; chuyển sang {new_status} thì server không "
             "còn model nào để phân phối. Bật một variant khác trước.",
-            http_status=409,
         )
 
     old_status = entry.get("status")

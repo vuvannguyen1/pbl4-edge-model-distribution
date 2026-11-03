@@ -37,12 +37,17 @@ class ServerMonitor:
         interval_s: float = 3.0,
         check: Callable[[], bool] | None = None,
         on_reconnect: Callable[[], None] | None = None,
+        heartbeat: Callable[[], object] | None = None,
+        heartbeat_every_s: float = 10.0,
     ) -> None:
         self.server_url = server_url
         self.out = out
         self.interval_s = interval_s
         self.check = check or (lambda: server_reachable(server_url))
         self.on_reconnect = on_reconnect
+        self.heartbeat = heartbeat  # gọi định kỳ khi đang kết nối: dashboard thấy máy còn chạy
+        self.heartbeat_every_s = heartbeat_every_s
+        self._last_beat = 0.0
         self.connected = True  # chỉ bật sau khi vừa gọi server thành công
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -66,9 +71,21 @@ class ServerMonitor:
                 "bị ngắt. Model đã tải vẫn dùng được offline: python -m client.detect"
             )
 
+    def beat(self) -> None:
+        if self.heartbeat is None or not self.connected:
+            return
+        if time.monotonic() - self._last_beat < self.heartbeat_every_s:
+            return
+        self._last_beat = time.monotonic()
+        try:
+            self.heartbeat()
+        except Exception:  # heartbeat chỉ để hiển thị, lỗi thì bỏ qua
+            pass
+
     def _loop(self) -> None:
         while not self._stop.wait(self.interval_s):
             self.poll()
+            self.beat()
 
     def start(self) -> None:
         if self._thread is not None:

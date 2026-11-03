@@ -14,7 +14,7 @@ export default {
   mount(main) {
     const list = card(
       "Thiết bị đã đăng ký",
-      "Trạng thái theo lần cuối gọi API: ≤ 30 giây là đang hoạt động, đến 5 phút là im lặng.",
+      "Đang hoạt động: liên lạc server trong 30 giây (client đang mở tự gửi heartbeat 10 giây/lần) hoặc đang chia sẻ P2P. Đến 5 phút là im lặng.",
     );
     main.append(
       pageHead(
@@ -40,7 +40,7 @@ export default {
           rows: data.devices,
           columns: [
             { key: "device_id", label: "Thiết bị", render: (d) => h("span", { class: "mono" }, d.device_id) },
-            { key: "last_seen_age_s", label: "Hoạt động", render: (d) => h("div", { class: "stack", style: "gap:4px" }, deviceActivity(d.last_seen_age_s), h("span", { class: "small muted" }, fmt.ago(d.last_seen_age_s))) },
+            { key: "last_seen_age_s", label: "Hoạt động", render: (d) => h("div", { class: "stack", style: "gap:4px" }, d.active ? badge("success", "Đang hoạt động", "wifi-high") : deviceActivity(d.last_seen_age_s), h("span", { class: "small muted" }, fmt.ago(d.last_seen_age_s))) },
             { key: "device_class", label: "Lớp thiết bị", render: (d) => h("span", { class: "mono" }, d.device_class) },
             {
               key: "ram_mb",

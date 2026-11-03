@@ -13,6 +13,8 @@ ERROR_STATUS: dict[str, int] = {
     "VERSION_MISMATCH": 409,
     "NO_VARIANT_FITS": 422,
     "INTERNAL": 500,
+    # chỉ dùng ở /admin-api (thao tác quản trị xung đột trạng thái), không thuộc protocol 1.0
+    "CONFLICT": 409,
 }
 
 
