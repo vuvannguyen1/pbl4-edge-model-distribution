@@ -3,6 +3,8 @@
 Registry là danh mục động: server không biết trước có những variant nào.
 Chỉ bản ghi `status == "ready"`, đủ metadata cho khối `Variant` và có
 `storage_path` nằm bên trong Model Store mới được xem là có thể phân phối.
+Bản ghi `disabled` (tắt từ dashboard) không được chọn nữa; `get_servable` vẫn
+trả nó để server giao nốt miếng cho lượt đang tải dở (xem `locate_chunk`).
 File Registry được tự nạp lại khi thời điểm sửa đổi thay đổi, nên chạy lại
 `tools/build_registry.py` không cần khởi động lại server.
 """
@@ -11,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -24,6 +27,9 @@ from server.schemas import Variant
 logger = logging.getLogger("pbl4.server.registry")
 
 READY = "ready"
+DISABLED = "disabled"
+# trạng thái mà /api/chunks vẫn phục vụ (chọn variant thì chỉ dùng READY)
+SERVABLE = (READY, DISABLED)
 
 
 @dataclass(frozen=True)
@@ -112,6 +118,21 @@ def safe_storage_path(model_store: Path, storage_path: str) -> Path | None:
     return candidate
 
 
+def write_text_atomic(path: Path, text: str) -> None:
+    """Ghi ra file tạm cùng thư mục rồi `os.replace`: lỗi giữa chừng không làm hỏng file cũ."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        temp_path.write_text(text, encoding="utf-8")
+        os.replace(temp_path, path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def write_registry_atomic(registry_path: Path, data: dict[str, Any]) -> None:
+    write_text_atomic(registry_path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+
+
 class Registry:
     """Danh mục variant đọc từ file JSON, an toàn khi nhiều luồng cùng đọc."""
 
@@ -121,6 +142,7 @@ class Registry:
         self._lock = threading.Lock()
         self._mtime_ns: int | None = None
         self._ready: dict[str, RegistryVariant] = {}
+        self._servable: dict[str, RegistryVariant] = {}
         self._all_ids: set[str] = set()
         self.load()
 
@@ -134,10 +156,11 @@ class Registry:
         except (OSError, json.JSONDecodeError) as exc:
             logger.error("Không đọc được Registry %s: %s", self.registry_path, exc)
             with self._lock:
-                self._ready, self._all_ids, self._mtime_ns = {}, set(), None
+                self._ready, self._servable, self._all_ids, self._mtime_ns = {}, {}, set(), None
             return
 
         ready: dict[str, RegistryVariant] = {}
+        servable: dict[str, RegistryVariant] = {}
         all_ids: set[str] = set()
         for entry in raw.get("variants", []):
             variant_id = entry.get("variant_id")
@@ -146,7 +169,7 @@ class Registry:
                 continue
             all_ids.add(variant_id)
             status = entry.get("status")
-            if status != READY:
+            if status not in SERVABLE:
                 logger.info("Registry: %s ở trạng thái %s, không phân phối", variant_id, status)
                 continue
             try:
@@ -160,7 +183,7 @@ class Registry:
             if safe_storage_path(self.model_store, entry.get("storage_path", "")) is None:
                 logger.warning("Registry: %s có storage_path không an toàn, bỏ qua", variant_id)
                 continue
-            ready[variant_id] = RegistryVariant(
+            servable[variant_id] = RegistryVariant(
                 variant_id=variant_id,
                 task_id=entry["task_id"],
                 storage_path=entry["storage_path"],
@@ -171,9 +194,14 @@ class Registry:
                 top1_accuracy=float(entry["top1_accuracy"]),
                 protocol_variant=protocol_variant,
             )
+            if status == READY:
+                ready[variant_id] = servable[variant_id]
+            else:
+                logger.info("Registry: %s đã tắt, không chọn nữa (miếng vẫn tải được)", variant_id)
 
         with self._lock:
             self._ready = ready
+            self._servable = servable
             self._all_ids = all_ids
             self._mtime_ns = stat.st_mtime_ns
         logger.info(
@@ -204,6 +232,11 @@ class Registry:
     def get_ready(self, variant_id: str) -> RegistryVariant | None:
         with self._lock:
             return self._ready.get(variant_id)
+
+    def get_servable(self, variant_id: str) -> RegistryVariant | None:
+        """Variant ready hoặc disabled, đủ metadata; dùng để giao nốt miếng cho lượt đang tải dở."""
+        with self._lock:
+            return self._servable.get(variant_id)
 
     def file_path(self, variant: RegistryVariant) -> Path | None:
         return safe_storage_path(self.model_store, variant.storage_path)

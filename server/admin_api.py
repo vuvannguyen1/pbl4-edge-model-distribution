@@ -1,16 +1,24 @@
-"""API chỉ đọc cho dashboard web (`/admin-api/*`).
+"""API cho dashboard web và quản trị model (`/admin-api/*`), một router duy nhất.
 
-Lớp mỏng: đọc trạng thái sẵn có của `DistributionService` (Registry, thiết bị, request
-trong RAM), các file JSONL feedback và file log trong ngày, rồi trả JSON cho trang
-`/ui`. Không chọn model, không lập plan, không ghi gì. Thao tác của dashboard (xin model
+Phần đọc: lớp mỏng đọc trạng thái sẵn có của `DistributionService` (Registry, thiết bị,
+request trong RAM), các file JSONL feedback, file log trong ngày và CSDL SQL, rồi trả JSON
+cho trang `/ui`. Không chọn model, không lập plan.
+
+Phần ghi (chỉ hai thao tác quản trị): upload model mới (`ingest_model`) và đổi trạng thái
+variant. Cả hai ghi Registry JSON và CSDL dưới cùng một khóa rồi nạp lại Registry trong
+RAM, nên `/api/request` kế tiếp thấy ngay thay đổi. Thao tác khác của dashboard (xin model
 thử, gửi đánh giá) gọi thẳng các endpoint Protocol 1.0 trong `server/main.py`.
 """
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
+import logging
 import re
 import statistics
+import threading
 from collections.abc import Iterable, Iterator
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -18,12 +26,24 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Request
+from sqlalchemy import select
+from sqlalchemy.orm import joinedload
+from starlette.concurrency import run_in_threadpool
 
 from server.config import PROTOCOL_VERSION, REPO_ROOT, Settings
+from server.db import (
+    ModelVariantRecord,
+    get_feedback_statistics,
+    get_session_factory,
+    sync_registry_to_db,
+)
 from server.errors import ProtocolError, bad_request, unknown_variant
+from server.ingestion import IngestionError, ingest_model
+from server.registry import READY, write_text_atomic
 from server.service import DistributionService
 from server.state import DownloadRequest, url_origin
-from server.user_feedback_handler import FEEDBACK_LOG_PATH
+
+logger = logging.getLogger("pbl4.server.admin")
 
 MODEL_CARDS_DIR = REPO_ROOT / "metadata" / "model_cards"
 METRICS_PATTERN = "feedback-*.jsonl"
@@ -99,7 +119,8 @@ def read_jsonl_newest(paths: Iterable[Path], limit: int) -> list[dict[str, Any]]
 
 def _feedback_paths(settings: Settings, kind: str) -> list[Path]:
     if kind == "text":
-        return [FEEDBACK_LOG_PATH] if FEEDBACK_LOG_PATH.is_file() else []
+        path = settings.user_feedback_log
+        return [path] if path.is_file() else []
     pattern = METRICS_PATTERN if kind == "metrics" else MANUAL_PATTERN
     folder = settings.feedback_dir
     return list(folder.glob(pattern)) if folder.is_dir() else []
@@ -361,13 +382,42 @@ def variants(request: Request) -> dict[str, Any]:
     return {"variants": sorted(rows, key=lambda r: r["variant_id"])}
 
 
+def _db_variant(variant_id: str) -> dict[str, Any] | None:
+    """Bản ghi variant trong CSDL (trạng thái, artifact, model card); None nếu không có/CSDL lỗi."""
+    try:
+        with get_session_factory()() as session:
+            record = session.get(ModelVariantRecord, variant_id)
+            if record is None:
+                return None
+            artifact = record.artifact
+            card = record.model_card_json
+            return {
+                "status": record.status,
+                "artifact": {
+                    "filename": artifact.filename,
+                    "storage_path": artifact.storage_path,
+                    "size_bytes": artifact.size_bytes,
+                    "sha256": artifact.sha256,
+                    "chunk_count": artifact.chunk_count,
+                }
+                if artifact
+                else None,
+                "model_card": json.loads(card) if card else None,
+            }
+    except Exception as exc:  # CSDL lỗi không được làm hỏng trang chi tiết (Registry vẫn đủ)
+        logger.warning("Không đọc được %s trong CSDL: %s", variant_id, exc)
+        return None
+
+
 @router.get("/variants/{variant_id}")
 def variant_detail(request: Request, variant_id: str) -> dict[str, Any]:
+    """Chi tiết một variant: Registry (nguồn chính) + số đo feedback + bản ghi CSDL."""
     service, settings = _service(request), _settings(request)
     entry = next((e for e in _registry_entries(settings) if e["variant_id"] == variant_id), None)
     if entry is None:
         raise unknown_variant(variant_id)
     metrics = read_jsonl_newest(_feedback_paths(settings, "metrics"), MAX_LIMIT)
+    db = _db_variant(variant_id)
     return {
         **_variant_row(service, entry, metrics),
         "normalize": entry.get("normalize"),
@@ -375,8 +425,204 @@ def variant_detail(request: Request, variant_id: str) -> dict[str, Any]:
         "output_contract": entry.get("output_contract"),
         "runtime_info": entry.get("runtime_info"),
         "chunks": entry.get("chunks") or [],
-        "model_card": _model_card(variant_id),
+        # model card trong metadata/ nếu có; variant upload qua dashboard chỉ có metadata trong CSDL
+        "model_card": _model_card(variant_id) or (db["model_card"] if db else None),
+        "db_status": db["status"] if db else None,
+        "artifact": db["artifact"] if db else None,
     }
+
+
+# ---------------------------------------------------------------- quản trị model (CSDL)
+
+VARIANT_STATUSES = ("draft", "validating", "ready", "disabled", "retired")
+# upload và đổi trạng thái cùng ghi Registry + CSDL: làm lần lượt để hai bên không lệch nhau
+_write_lock = threading.Lock()
+
+
+async def _read_body(request: Request) -> dict[str, Any]:
+    body = await request.body()
+    try:
+        data = json.loads(body.decode("utf-8")) if body else None
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise bad_request("Nội dung không phải JSON UTF-8 hợp lệ.") from exc
+    if not isinstance(data, dict):
+        raise bad_request("Nội dung phải là một đối tượng JSON.")
+    return data
+
+
+def _db_error(exc: Exception) -> ProtocolError:
+    logger.error("Lỗi CSDL: %s", exc)
+    return ProtocolError("INTERNAL", "Không đọc được CSDL, xem log server.")
+
+
+@router.get("/feedback-stats")
+def feedback_stats() -> dict[str, Any]:
+    """Thống kê feedback đã lưu trong CSDL (số đo của agent và nhận xét người dùng)."""
+    try:
+        with get_session_factory()() as session:
+            return get_feedback_statistics(session)
+    except Exception as exc:
+        raise _db_error(exc) from exc
+
+
+@router.get("/models")
+def models_in_db() -> dict[str, Any]:
+    """Danh sách variant trong CSDL (trang dashboard dùng /variants, đầy đủ hơn)."""
+    try:
+        with get_session_factory()() as session:
+            stmt = select(ModelVariantRecord).options(
+                joinedload(ModelVariantRecord.model), joinedload(ModelVariantRecord.artifact)
+            )
+            rows = [
+                {
+                    "variant_id": v.variant_id,
+                    "model_id": v.model_id,
+                    "task_id": v.model.task_id if v.model else "",
+                    "family": v.model.family if v.model else "",
+                    "version": v.version,
+                    "precision": v.precision,
+                    "status": v.status,
+                    "top1_accuracy": v.top1_accuracy,
+                    "file": v.artifact.filename if v.artifact else "",
+                    "size_bytes": v.artifact.size_bytes if v.artifact else 0,
+                    "chunk_count": v.artifact.chunk_count if v.artifact else 0,
+                }
+                for v in session.scalars(stmt).unique().all()
+            ]
+    except Exception as exc:
+        raise _db_error(exc) from exc
+    return {"count": len(rows), "variants": rows}
+
+
+def _apply_status(
+    service: DistributionService, settings: Settings, variant_id: str, new_status: str
+) -> dict[str, Any]:
+    """Ghi trạng thái vào Registry (nguyên tử) rồi CSDL; CSDL lỗi thì hoàn tác Registry."""
+    path = settings.registry_path
+    try:
+        old_text = path.read_text(encoding="utf-8")
+        data = json.loads(old_text)
+    except (OSError, ValueError) as exc:
+        logger.error("Không đọc được Registry %s: %s", path, exc)
+        raise ProtocolError("INTERNAL", "Không đọc được Registry, xem log server.") from exc
+    entry = next((e for e in data.get("variants", []) if e.get("variant_id") == variant_id), None)
+    if entry is None:
+        raise unknown_variant(variant_id)
+
+    service.registry.refresh_if_changed()
+    ready_ids = {v.variant_id for v in service.registry.ready_variants()}
+    if new_status != READY and ready_ids == {variant_id}:
+        raise ProtocolError(
+            "BAD_REQUEST",
+            f"{variant_id} là variant ready cuối cùng; chuyển sang {new_status} thì server không "
+            "còn model nào để phân phối. Bật một variant khác trước.",
+            http_status=409,
+        )
+
+    old_status = entry.get("status")
+    entry["status"] = new_status
+    write_text_atomic(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    try:
+        with get_session_factory()() as session:
+            record = session.get(ModelVariantRecord, variant_id)
+            if record is None:  # CSDL chưa có variant này: đồng bộ cả Registry vào
+                sync_registry_to_db(session, path, MODEL_CARDS_DIR)
+            else:
+                record.status = new_status
+                session.commit()
+    except Exception as exc:
+        write_text_atomic(path, old_text)
+        service.registry.load()
+        logger.error("Đổi trạng thái %s thất bại ở CSDL, đã hoàn tác Registry: %s", variant_id, exc)
+        raise ProtocolError(
+            "INTERNAL",
+            f"Không ghi được trạng thái vào CSDL; Registry đã hoàn tác, {variant_id} vẫn là "
+            f"{old_status}.",
+        ) from exc
+
+    service.registry.load()
+    distributable = service.registry.get_ready(variant_id) is not None
+    logger.info(
+        "Quản trị: %s %s -> %s (%s)",
+        variant_id,
+        old_status,
+        new_status,
+        "được chọn để phân phối" if distributable else "không được chọn khi xin model",
+    )
+    return {
+        "status": "success",
+        "variant_id": variant_id,
+        "old_status": old_status,
+        "new_status": new_status,
+        "distributable": distributable,
+        "ready_count": len(service.registry.ready_variants()),
+    }
+
+
+@router.post("/variants/{variant_id}/status")
+async def set_variant_status(request: Request, variant_id: str) -> dict[str, Any]:
+    """Đổi trạng thái variant trong Registry và CSDL.
+
+    Chỉ `ready` mới được Selector chọn. `disabled` không được chọn nữa nhưng thiết bị đang
+    tải dở vẫn lấy được miếng. Không cho tắt variant ready cuối cùng.
+    """
+    data = await _read_body(request)
+    new_status = data.get("status")
+    if new_status not in VARIANT_STATUSES:
+        choices = ", ".join(VARIANT_STATUSES)
+        raise bad_request(f"Trạng thái không hợp lệ. Chọn một trong: {choices}.")
+    service, settings = _service(request), _settings(request)
+
+    def apply() -> dict[str, Any]:
+        with _write_lock:
+            return _apply_status(service, settings, variant_id, new_status)
+
+    return await run_in_threadpool(apply)
+
+
+def _upload_bytes(data: dict[str, Any]) -> tuple[bytes, str]:
+    filename = str(data.get("filename") or "")
+    if "file_base64" in data:
+        try:
+            return base64.b64decode(str(data["file_base64"]), validate=True), filename
+        except (binascii.Error, ValueError) as exc:
+            raise bad_request("file_base64 không phải base64 hợp lệ.") from exc
+    if "file_path" in data:  # đường dẫn trên chính máy server (dùng cho script/test)
+        src = Path(str(data["file_path"]))
+        if not src.is_file():
+            raise bad_request(f"Không tìm thấy file nguồn tại {data['file_path']}")
+        return src.read_bytes(), filename or src.name
+    raise bad_request("Cần cung cấp 'file_path' hoặc 'file_base64'.")
+
+
+@router.post("/models/upload")
+async def upload_model(request: Request) -> dict[str, Any]:
+    """Nhận một file ONNX mới, kiểm định, ghi Model Store + CSDL + Registry (xem `ingest_model`)."""
+    data = await _read_body(request)
+    metadata = data.get("metadata") or {}
+    if not isinstance(metadata, dict):
+        raise bad_request("metadata phải là một đối tượng JSON.")
+    service, settings = _service(request), _settings(request)
+
+    def ingest() -> dict[str, Any]:
+        model_bytes, filename = _upload_bytes(data)
+        filename = filename or f"{metadata.get('variant_id', 'model')}.onnx"
+        with _write_lock:
+            try:
+                with get_session_factory()() as session:
+                    result = ingest_model(
+                        model_bytes=model_bytes,
+                        filename=filename,
+                        metadata=metadata,
+                        settings=settings,
+                        session=session,
+                    )
+            except IngestionError as exc:
+                raise bad_request(exc.message) from exc
+            service.registry.load()  # variant mới thành ứng viên ngay, không cần khởi động lại
+        return result
+
+    return await run_in_threadpool(ingest)
 
 
 # ---------------------------------------------------------------- request / truyền tải

@@ -15,6 +15,7 @@ dependencies = [
     "onnxruntime",
     "numpy",
     "pillow",
+    "sqlalchemy>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -23,9 +24,16 @@ dev = [
     "jsonschema",
     "httpx",
 ]
+# huấn luyện/huấn luyện lại ML Selector (selector/train.py, selector/retrain.py)
+ml = [
+    "joblib",
+    "pandas",
+    "scikit-learn",
+    "lightgbm",
+]
 
 [tool.setuptools]
-packages = ["server", "client"]
+packages = ["server", "server.db", "client", "selector"]
 
 [tool.setuptools.package-data]
 # giao diện web: HTML/CSS/JS/font/icon tĩnh, không cần build

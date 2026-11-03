@@ -1,6 +1,7 @@
 """
 user_feedback_handler.py
 Xử lý lưu trữ feedback của khách hàng và đánh dấu các lượt phân phối bị đánh giá thấp.
+Hỗ trợ lưu đồng thời ra file JSONL (tương thích ngược) và lưu vào CSDL SQL (SQLAlchemy).
 """
 from __future__ import annotations
 
@@ -11,15 +12,14 @@ from pathlib import Path
 from typing import Any
 
 from selector.feedback_classifier import classify_user_feedback
+from server.db import get_session_factory, record_user_feedback as db_record_user_feedback
 
 logger = logging.getLogger("server.user_feedback")
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-FEEDBACK_LOG_PATH = DATA_DIR / "user_feedbacks.jsonl"
 
-
-def record_user_feedback(payload: dict[str, Any]) -> dict[str, Any]:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+def record_user_feedback(payload: dict[str, Any], log_path: Path) -> dict[str, Any]:
+    """Ghi một nhận xét vào `log_path` (JSONL, thường là `Settings.user_feedback_log`) và CSDL."""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
 
     text = payload.get("feedback_text", "").strip()
     score = payload.get("score")
@@ -33,24 +33,48 @@ def record_user_feedback(payload: dict[str, Any]) -> dict[str, Any]:
 
     flag_for_retrain = int(score) <= 2  # Nhãn 'Tệ' (1) hoặc 'Trung bình' (2)
 
+    device_id = payload.get("device_id", "unknown")
+    variant_id = payload.get("distributed_variant", "mobilenetv2_int8")
+
     record = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "device_id": payload.get("device_id", "unknown"),
+        "device_id": device_id,
         "platform": payload.get("platform", "windows"),
         "cpu_arch": payload.get("cpu_arch", "x86_64"),
         "ram_mb": int(payload.get("ram_mb", 4096)),
         "bandwidth_kbps": float(payload.get("bandwidth_kbps", 2000.0)),
         "deadline_s": float(payload.get("deadline_s", 60.0)),
         "free_storage_mb": float(payload.get("free_storage_mb", 1024.0)),
-        "distributed_variant": payload.get("distributed_variant", "mobilenetv2_int8"),
+        "distributed_variant": variant_id,
         "feedback_text": text,
         "score": int(score),
         "label": str(label),
         "flag_for_retrain": flag_for_retrain,
     }
 
-    with open(FEEDBACK_LOG_PATH, "a", encoding="utf-8") as f:
+    # 1. Ghi log JSONL (bảo toàn tương thích ngược)
+    with open(log_path, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    # 2. Ghi vào CSDL SQL
+    try:
+        with get_session_factory()() as db_session:
+            db_record_user_feedback(
+                session=db_session,
+                device_id=device_id,
+                variant_id=variant_id,
+                feedback_text=text,
+                sentiment_score=int(score),
+                sentiment_label=str(label),
+                flag_for_retrain=flag_for_retrain,
+                feedback_id=payload.get("feedback_id"),
+                request_id=payload.get("request_id"),
+                rating=payload.get("rating"),
+                is_correct=payload.get("is_correct"),
+                actual_label=payload.get("actual_label"),
+            )
+    except Exception as exc:
+        logger.warning("Không thể ghi user feedback vào CSDL: %s", exc)
 
     logger.info("Đã ghi nhận user feedback: %s (%s điểm) - flag_retrain=%s", label, score, flag_for_retrain)
 

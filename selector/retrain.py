@@ -9,12 +9,6 @@ import json
 import logging
 import sys
 from pathlib import Path
-import joblib
-import pandas as pd
-from lightgbm import LGBMClassifier
-from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("selector.retrain")
@@ -47,6 +41,15 @@ def correct_variant(record: dict) -> str:
 
 
 def run_retrain() -> dict:
+    # Thư viện ML nặng chỉ cần khi huấn luyện; import ở đây để `correct_variant` dùng được
+    # (và test được) trên máy chưa cài pandas/lightgbm/scikit-learn.
+    import joblib
+    import pandas as pd
+    from lightgbm import LGBMClassifier
+    from sklearn.compose import ColumnTransformer
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import OneHotEncoder
+
     if not FEEDBACK_LOG_PATH.exists():
         logger.warning("Chưa có file log feedback tại %s", FEEDBACK_LOG_PATH)
         return {"status": "skipped", "message": "Chưa có feedback nào"}

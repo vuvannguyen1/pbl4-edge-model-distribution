@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from server.admin_api import MODEL_CARDS_DIR
 from server.admin_api import router as admin_router
 from server.config import PROTOCOL_VERSION, Settings
 from server.errors import ProtocolError, bad_request, error_body
@@ -218,6 +219,19 @@ def create_app(settings: Settings | None = None, selector: ModelSelector | None 
     app.state.service = service
     app.state.bucket = bucket
 
+    # Khởi tạo CSDL SQL (theo settings.data_dir, để test không chạm data/ thật) và đồng bộ
+    # Registry ban đầu. CSDL lỗi không chặn phân phối: luồng Protocol chỉ dựa vào Registry.
+    try:
+        from server.db import get_session_factory, init_db, init_engine, sync_registry_to_db
+
+        settings.data_dir.mkdir(parents=True, exist_ok=True)
+        init_engine(settings.database_url)
+        init_db()
+        with get_session_factory()() as db_session:
+            sync_registry_to_db(db_session, settings.registry_path, MODEL_CARDS_DIR)
+    except Exception as exc:
+        logger.warning("Không khởi tạo được CSDL (%s): %s", settings.database_url, exc)
+
     ready = registry.ready_variants()
     logger.info(
         "Server sẵn sàng: protocol %s, %d variant ready (%s), selector %s, giới hạn tốc độ %s, "
@@ -320,7 +334,7 @@ def create_app(settings: Settings | None = None, selector: ModelSelector | None 
         data = await read_json(request)
         if not isinstance(data, dict):
             raise bad_request("Nội dung phải là một đối tượng JSON.")
-        res = record_user_feedback(data)
+        res = record_user_feedback(data, settings.user_feedback_log)
         return JSONResponse(res)
 
     # ------------------------------------------------------------ dashboard web

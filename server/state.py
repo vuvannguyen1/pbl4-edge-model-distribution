@@ -180,6 +180,14 @@ class StateStore:
 
     # ------------------------------------------------------------ peer / have
 
+    def has_unfinished(self, variant_id: str) -> bool:
+        """Có lượt tải variant này chưa xong (không tính lượt "xin thử" từ dashboard)."""
+        with self._lock:
+            return any(
+                r.variant_id == variant_id and not r.complete and r.source != "web"
+                for r in self._requests.values()
+            )
+
     def has_complete(self, device_id: str, variant_id: str) -> bool:
         with self._lock:
             return (device_id, variant_id) in self._complete

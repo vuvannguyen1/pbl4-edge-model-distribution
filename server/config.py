@@ -9,6 +9,7 @@
 | PBL4_PEER_ENABLED      | true                           |
 | PBL4_LATENCY_SLO_MS    | 500                            |
 | PBL4_DATA_DIR          | data                           |
+| PBL4_DATABASE_URL      | sqlite tại <PBL4_DATA_DIR>/pbl4.db |
 
 Đường dẫn tương đối tính từ gốc repo, không tính từ thư mục đang đứng.
 """
@@ -86,3 +87,14 @@ class Settings:
     @property
     def feedback_dir(self) -> Path:
         return self.data_dir / "feedback"
+
+    @property
+    def user_feedback_log(self) -> Path:
+        """Nhận xét dạng chữ từ `/api/user-feedback` (đầu vào của selector/retrain.py)."""
+        return self.data_dir / "user_feedbacks.jsonl"
+
+    @property
+    def database_url(self) -> str:
+        """`PBL4_DATABASE_URL` nếu có, ngược lại SQLite tại <data_dir>/pbl4.db."""
+        url = os.environ.get("PBL4_DATABASE_URL", "").strip()
+        return url or f"sqlite:///{(self.data_dir / 'pbl4.db').as_posix()}"
