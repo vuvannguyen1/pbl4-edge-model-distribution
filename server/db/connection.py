@@ -7,7 +7,7 @@ from collections.abc import Generator
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, inspect, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from server.db.models import Base
@@ -70,6 +70,41 @@ def init_db(engine: Engine | None = None) -> None:
     """Tạo tất cả các bảng nếu chưa tồn tại."""
     target_engine = engine or get_engine()
     Base.metadata.create_all(bind=target_engine)
+    _migrate_legacy_columns(target_engine)
+
+
+def _migrate_legacy_columns(engine: Engine) -> None:
+    """Bổ sung cột catalog/feedback cho database tạo từ Version 1."""
+    additions = {
+        "model_variants": {
+            "task_group": "VARCHAR(32) DEFAULT 'CV'",
+            "map50": "FLOAT",
+            "map50_95": "FLOAT",
+            "peak_ram_mb": "FLOAT",
+            "latency_ms_p50": "FLOAT",
+            "latency_ms_p95": "FLOAT",
+            "fps": "FLOAT",
+        },
+        "model_artifacts": {
+            "source_provider": "VARCHAR(32)",
+            "source_model_id": "VARCHAR(255)",
+            "source_revision": "VARCHAR(255)",
+            "source_format": "VARCHAR(32)",
+            "distribution_format": "VARCHAR(32) DEFAULT 'onnx'",
+        },
+        "user_feedbacks": {
+            "sentiment_confidence": "FLOAT",
+            "sentiment_engine": "VARCHAR(64)",
+            "feedback_reason": "VARCHAR(64)",
+        },
+    }
+    inspector = inspect(engine)
+    with engine.begin() as connection:
+        for table, columns in additions.items():
+            existing = {column["name"] for column in inspector.get_columns(table)}
+            for name, definition in columns.items():
+                if name not in existing:
+                    connection.execute(text(f'ALTER TABLE "{table}" ADD COLUMN "{name}" {definition}'))
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -80,4 +115,3 @@ def get_db() -> Generator[Session, None, None]:
         yield session
     finally:
         session.close()
-

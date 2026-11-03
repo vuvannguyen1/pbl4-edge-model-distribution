@@ -184,7 +184,7 @@ def generate_samples(n_samples=30000, seed=42):
 
 
 if __name__ == "__main__":
-    out_dir = Path(__file__).resolve().parent / "training_data"
+    out_dir = Path(__file__).resolve().parent.parent / "data" / "selector"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_file = out_dir / "selector_synthetic_dataset.csv"
 

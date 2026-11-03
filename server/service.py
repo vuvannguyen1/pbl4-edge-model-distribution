@@ -149,6 +149,8 @@ class DistributionService:
     def request_model(self, req: ModelRequest, base_url: str) -> ModelResponse:
         device = self._device(req.device_id)
         self.registry.refresh_if_changed()
+        if req.task not in {variant.task_id for variant in self.registry.ready_variants()}:
+            raise bad_request(f"Tác vụ '{req.task}' chưa có model ready trong catalog.")
         bandwidth = self.effective_bandwidth(req.bandwidth_kbps)
         context = SelectionContext(
             device_id=device.device_id,

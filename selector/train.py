@@ -23,7 +23,7 @@ from lightgbm import LGBMClassifier
 
 def train_model():
     base_dir = Path(__file__).resolve().parent
-    data_path = base_dir / "training_data" / "selector_synthetic_dataset.csv"
+    data_path = base_dir.parent / "data" / "selector" / "selector_synthetic_dataset.csv"
     
     if not data_path.exists():
         raise FileNotFoundError(f"Không tìm thấy file {data_path}. Vui lòng chạy generate_dataset.py trước!")

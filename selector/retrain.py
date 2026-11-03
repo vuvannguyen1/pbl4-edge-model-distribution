@@ -21,7 +21,7 @@ logger = logging.getLogger("selector.retrain")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FEEDBACK_LOG_PATH = REPO_ROOT / "data" / "user_feedbacks.jsonl"
-DATASET_PATH = REPO_ROOT / "selector" / "training_data" / "selector_synthetic_dataset.csv"
+DATASET_PATH = REPO_ROOT / "data" / "selector" / "selector_synthetic_dataset.csv"
 MODEL_PATH = REPO_ROOT / "selector" / "artifacts" / "selector_model.joblib"
 
 

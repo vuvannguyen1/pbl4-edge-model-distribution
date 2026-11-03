@@ -86,3 +86,11 @@ class Settings:
     @property
     def feedback_dir(self) -> Path:
         return self.data_dir / "feedback"
+
+    @property
+    def selector_data_dir(self) -> Path:
+        return self.data_dir / "selector"
+
+    @property
+    def sentiment_data_dir(self) -> Path:
+        return self.data_dir / "phanloaicamxuc"

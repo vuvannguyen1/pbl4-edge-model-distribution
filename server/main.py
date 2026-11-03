@@ -211,7 +211,7 @@ def create_app(settings: Settings | None = None, selector: ModelSelector | None 
 
     # Khởi tạo CSDL SQL và đồng bộ Registry ban đầu
     try:
-        from server.db import get_session_factory, init_db, sync_registry_to_db
+        from server.db import get_session_factory, init_db, sync_data_to_db, sync_registry_to_db
         init_db()
         with get_session_factory()() as db_session:
             sync_registry_to_db(
@@ -219,6 +219,7 @@ def create_app(settings: Settings | None = None, selector: ModelSelector | None 
                 settings.registry_path,
                 settings.registry_path.parent.parent / "metadata" / "model_cards",
             )
+            sync_data_to_db(db_session, settings.data_dir)
     except Exception as exc:
         logger.debug("Khởi tạo CSDL hoặc đồng bộ: %s", exc)
 
