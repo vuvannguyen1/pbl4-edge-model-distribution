@@ -907,6 +907,11 @@ fieldset.field {
   overflow-wrap: anywhere;
 }
 
+/* badge dài trong bảng thông tin (vd. nguồn model) xuống dòng thay vì tràn khỏi màn hẹp */
+.dl-grid dd .badge {
+  white-space: normal;
+}
+
 .log-list {
   margin: 0;
   padding: 0;

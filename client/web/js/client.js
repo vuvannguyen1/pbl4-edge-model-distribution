@@ -9,6 +9,7 @@ function sourceBadge(r) {
   if (r.source === "cache") return badge("success", "Dùng model có sẵn trên máy");
   const d = r.download;
   if (r.source !== "server" || !d) return badge("neutral", r.source);
+  if (!d.chunks_from_peer && !d.chunks_from_server) return badge("success", "Đã có đủ trên máy, server xác nhận (không tải lại)");
   if (d.chunks_from_peer) return badge("success", `Vừa tải: ${d.chunks_from_peer} miếng từ peer, ${d.chunks_from_server} từ server`, "share-network");
   return badge("info", `Vừa tải: ${d.chunks_from_server} miếng từ server`);
 }
@@ -302,7 +303,9 @@ function renderResult(r) {
         row("Latency (trung vị)", `${fmt.ms(r.latency_ms_median)} · ${r.runs} lần`),
         row("Nạp model", fmt.ms(r.load_ms)),
         row("RAM đỉnh", r.peak_ram_mb != null ? `${fmt.num(r.peak_ram_mb)} MB` : "không đo được"),
-        r.download
+        r.download && !r.download.chunks_from_peer && !r.download.chunks_from_server
+          ? row("Tải model", "Không cần tải: máy đã có đủ các miếng")
+          : r.download
           ? row("Tải model", `${fmt.ms(r.download_ms)} · ${r.download.chunks_from_peer} miếng peer, ${r.download.chunks_from_server} server${r.download.bad_chunks ? `, ${r.download.bad_chunks} lần lỗi` : ""}`)
           : null,
         r.decision

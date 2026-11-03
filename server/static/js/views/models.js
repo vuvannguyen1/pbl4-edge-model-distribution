@@ -107,7 +107,16 @@ function field(id, label, control, hint = null, required = false) {
 
 function uploadForm(onDone) {
   const input = (id, attrs = {}) => h("input", { class: "input", id, name: id, ...attrs });
-  const file = input("up-file", { type: "file", accept: ".onnx", required: true, "aria-describedby": "up-file-hint" });
+  const file = input("up-file", { type: "file", accept: ".onnx", required: true, class: "sr-only", "aria-describedby": "up-file-hint up-file-name" });
+  const fileName = h("span", { class: "small muted", id: "up-file-name" }, "Chưa chọn file");
+  // nút chọn file tự vẽ: chữ của ô file gốc theo ngôn ngữ trình duyệt ("Choose File")
+  const filePicker = h(
+    "div",
+    { class: "row" },
+    file,
+    h("label", { for: "up-file", class: "btn btn-secondary" }, icon("upload-simple"), "Chọn file .onnx"),
+    fileName,
+  );
   const variant = input("up-variant", { required: true, maxlength: "64", autocomplete: "off", spellcheck: "false", "aria-describedby": "up-variant-hint" });
   const model = input("up-model", { required: true, maxlength: "64", autocomplete: "off", placeholder: "mobilenetv2" });
   const family = input("up-family", { maxlength: "64", autocomplete: "off", placeholder: "MobileNetV2" });
@@ -120,6 +129,7 @@ function uploadForm(onDone) {
 
   file.addEventListener("change", () => {
     const f = file.files[0];
+    fileName.textContent = f ? `${f.name} · ${fmt.mb(f.size)}` : "Chưa chọn file";
     if (f && !variant.value) variant.value = suggestId(f.name);
   });
 
@@ -152,7 +162,7 @@ function uploadForm(onDone) {
     h(
       "div",
       { class: "form-grid" },
-      field("up-file", "File ONNX", file, "Server mở thử bằng ONNX Runtime; file hỏng bị từ chối và không lưu lại.", true),
+      field("up-file", "File ONNX", filePicker, "Server mở thử bằng ONNX Runtime; file hỏng bị từ chối và không lưu lại.", true),
       field("up-variant", "Mã variant", variant, "Chữ thường, số, dấu _ (vd. mobilenetv2_demo). Không trùng tên file của variant khác.", true),
       field("up-model", "Model gốc (model_id)", model, null, true),
       field("up-family", "Họ model", family),
@@ -216,6 +226,7 @@ function uploadForm(onDone) {
       );
       toast(`Đã thêm ${r.variant_id} vào Registry.`);
       form.reset();
+      fileName.textContent = "Chưa chọn file";
       version.value = "1.0";
       level.value = "1";
       onDone();
@@ -274,15 +285,14 @@ function listView(main, ctx) {
         rows: data.variants,
         columns: [
           { key: "variant_id", label: "Variant", render: (v) => variantLink(v.variant_id) },
-          { key: "family", label: "Họ model" },
           { key: "precision", label: "Precision", render: (v) => h("span", { class: "tag" }, v.precision) },
           { key: "size_bytes", label: "Kích thước", align: "right", render: (v) => fmt.mb(v.size_bytes) },
           { key: "chunk_count", label: "Số miếng", align: "right" },
           { key: "top1_accuracy", label: "Top-1", align: "right", render: (v) => fmt.pct(v.top1_accuracy) },
           { key: "latency_ms_median", label: "Latency đo được", align: "right", render: (v) => (v.metrics_count ? `${fmt.ms(v.latency_ms_median)} (${v.metrics_count} lần)` : h("span", { class: "muted" }, "chưa đo")) },
           { key: "devices_complete", label: "Thiết bị có", align: "right" },
-          { key: "status", label: "Trạng thái", render: statusBadge },
-          { key: "actions", label: "Thao tác", sortable: false, render: (v) => statusActions(v, { readyCount, onDone: reload }) },
+          // nút Tắt/Bật nằm cùng cột trạng thái để bảng vừa màn 1366 px
+          { key: "status", label: "Trạng thái", render: (v) => h("div", { class: "row", style: "flex-wrap:nowrap" }, statusBadge(v), statusActions(v, { readyCount, onDone: reload })) },
         ],
       });
     },

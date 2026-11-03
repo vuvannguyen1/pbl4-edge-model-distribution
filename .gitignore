@@ -223,6 +223,7 @@ models/**/*.onnx
 
 # PBL4: du lieu sinh luc chay (log, feedback, cache client) va file tai do dang
 data/
+data_demo/
 *.part
 *.onnx
 # Anh demo tai bang tools/download_assets.py (giay phep thuoc tac gia goc, khong dua vao repo)

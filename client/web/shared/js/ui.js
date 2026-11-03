@@ -60,7 +60,7 @@ export const fmt = {
   int: (v) => (v === null || v === undefined ? "—" : Math.round(v).toLocaleString("vi-VN")),
   mb: (bytes) => (bytes == null ? "—" : `${NF.format(bytes / 1048576)} MB`),
   kbps: (v) => (v ? `${NF.format(v)} kbps` : "—"),
-  ms: (v) => (v == null ? "—" : `${NF.format(v)} ms`),
+  ms: (v) => (v == null ? "—" : v >= 10000 ? `${NF.format(v / 1000)} s` : `${NF.format(v)} ms`),
   s: (v) => (v == null ? "—" : `${NF.format(v)} s`),
   pct: (v) => (v == null ? "—" : `${NF.format(v * 100)} %`),
   time(iso) {
