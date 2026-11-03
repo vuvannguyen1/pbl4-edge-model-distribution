@@ -9,7 +9,6 @@ import time
 from pathlib import Path
 
 import pytest
-import requests
 
 from client.agent import AgentResult
 from client.feedback import FeedbackQueue
@@ -188,34 +187,34 @@ def test_feedback_offline_is_kept_pending(app: ClientWebApp) -> None:
     assert record["feedback_id"] == answer["feedback_id"]
     assert record["device_id"] == "webA"
     assert app.feedback_history()[0]["status"] == "pending"
-    assert answer["comment_status"] == "failed"  # offline: giao diện báo chưa gửi được nhận xét
+    assert record["comment"] == "ok"  # nhận xét nằm trong hàng chờ, đi cùng lúc gửi bù
+    assert answer["comment_status"] == "pending"
 
 
-def test_comment_forwarded_to_user_feedback(app: ClientWebApp, monkeypatch) -> None:
-    calls: list[dict] = []
+def test_comment_written_offline_is_classified_after_sync(app: ClientWebApp, live_server) -> None:
+    answer = app.submit_feedback(
+        {"variant_id": "mobilenetv2_int8", "rating": 2, "correct": False, "comment": "Khá tệ"}
+    )
+    assert answer["status"] == "pending" and answer["comment_status"] == "pending"
 
-    class Resp:
-        status_code = 200
+    server = live_server()
+    app.server = server.url
+    app._reachable = (0.0, False)
+    assert app.sync_feedback()["sent"] == 1
+    assert app.sync_feedback()["sent"] == 0  # gửi bù lại không chấm nhận xét lần nữa
 
-    def fake_post(url, json, timeout):
-        calls.append({"url": url, "json": json, "timeout": timeout})
-        return Resp()
+    log = server.app.state.settings.user_feedback_log
+    (line,) = log.read_text(encoding="utf-8").splitlines()
+    record = json.loads(line)
+    assert record["feedback_text"] == "Khá tệ"
+    assert record["device_id"] == "webA"
+    assert record["distributed_variant"] == "mobilenetv2_int8"
 
-    monkeypatch.setattr("client.web_ui.requests.post", fake_post)
-    payload = {"variant_id": "mobilenetv2_int8", "feedback_id": "fb-1", "request_id": "r-0001"}
-    assert app._send_comment(payload, "tải hơi lâu") == "sent"
-    (call,) = calls
-    assert call["url"] == f"{OFFLINE_SERVER}/api/user-feedback"
-    assert call["timeout"] <= 3
-    assert call["json"]["feedback_text"] == "tải hơi lâu"
-    assert call["json"]["distributed_variant"] == "mobilenetv2_int8"
-    assert "feedback_id" not in call["json"]  # server chống trùng theo feedback_id
-
-    def broken_post(*_a, **_k):
-        raise requests.ConnectionError("server tắt")
-
-    monkeypatch.setattr("client.web_ui.requests.post", broken_post)
-    assert app._send_comment(payload, "tải hơi lâu") == "failed"
+    online = app.submit_feedback(
+        {"variant_id": "mobilenetv2_int8", "rating": 5, "correct": True, "comment": "rất tốt"}
+    )
+    assert online["status"] == "sent" and online["comment_status"] == "sent"
+    assert len(log.read_text(encoding="utf-8").splitlines()) == 2  # không chấm hai lần
 
 
 @pytest.mark.parametrize(

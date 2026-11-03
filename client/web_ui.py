@@ -65,7 +65,6 @@ IMAGE_TYPES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 REACHABLE_TTL_S = 2.0
 HEARTBEAT_EVERY_S = 10.0  # trang đang mở thì báo server máy này còn chạy
-COMMENT_TIMEOUT_S = 3.0  # gửi kèm nhận xét chữ tới /api/user-feedback, lỗi thì bỏ qua
 HISTORY_LIMIT = 20
 DASHBOARD_HINT = "Chạy web_ui với --server http://<IP server>:8000 để mở dashboard từ thiết bị này"
 
@@ -493,44 +492,26 @@ class ClientWebApp:
         self.queue.add(payload)
         answer: dict[str, Any] = {"feedback_id": payload["feedback_id"], "status": STATUS_PENDING}
         self._reachable = (0.0, False)  # kiểm tra lại ngay, không dùng kết quả cũ
-        if not self.server_online():
-            answer["message"] = "Server chưa kết nối được: đã lưu chờ, sẽ gửi bù khi có mạng."
-            if comment:
-                answer["comment_status"] = "failed"
-            return answer
-        report = self.queue.sync(
-            ApiClient(self.server), out=lambda _line: None, only={payload["feedback_id"]}
-        )
-        if report.sent:
-            response = report.sent[0]["response"]
-            answer.update(status="sent", evaluation=response.get("evaluation"))
-        elif report.rejected:
-            answer.update(status="rejected", message=report.rejected[0].get("error"))
-        else:
-            answer["message"] = f"Chưa gửi được ({report.error}); đã lưu chờ để gửi bù."
-        if comment:
-            answer["comment_status"] = self._send_comment(payload, comment)
-        return answer
-
-    def _send_comment(self, payload: dict[str, Any], comment: str) -> str:
-        """Nhận xét chữ đi thêm vào /api/user-feedback (server chấm điểm cảm xúc).
-
-        Không gửi feedback_id: server chống trùng theo feedback_id, sẽ bỏ nhận xét này.
-        Lỗi không ảnh hưởng đánh giá chính đã gửi ở trên. Trả "sent" hoặc "failed".
-        """
-        body = {
-            "device_id": self.config.device_id,
-            "distributed_variant": payload["variant_id"],
-            "feedback_text": comment,
-            "request_id": payload.get("request_id"),
-        }
-        try:
-            resp = requests.post(
-                f"{self.server}/api/user-feedback", json=body, timeout=COMMENT_TIMEOUT_S
+        if self.server_online():
+            report = self.queue.sync(
+                ApiClient(self.server), out=lambda _line: None, only={payload["feedback_id"]}
             )
-        except requests.RequestException:
-            return "failed"
-        return "sent" if resp.status_code == 200 else "failed"
+            if report.sent:
+                response = report.sent[0]["response"]
+                answer.update(status="sent", evaluation=response.get("evaluation"))
+            elif report.rejected:
+                answer.update(status="rejected", message=report.rejected[0].get("error"))
+            else:
+                answer["message"] = f"Chưa gửi được ({report.error}); đã lưu chờ để gửi bù."
+        else:
+            answer["message"] = "Server chưa kết nối được: đã lưu chờ, sẽ gửi bù khi có mạng."
+        if comment:
+            # nhận xét nằm trong chính đánh giá (trường comment); server chấm nó khi nhận
+            # đánh giá, kể cả lúc gửi bù, nên số phận nhận xét đi theo đánh giá chính
+            answer["comment_status"] = {"sent": "sent", "rejected": "failed"}.get(
+                answer["status"], "pending"
+            )
+        return answer
 
     def sync_feedback(self) -> dict[str, Any]:
         if not self.server_online():

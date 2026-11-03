@@ -589,7 +589,8 @@ function renderFeedback() {
           resp.evaluation ? h("p", {}, fmt.text(resp.evaluation.reason)) : null,
           resp.message ? h("p", {}, resp.message) : null,
           resp.comment_status === "sent" ? h("p", { class: "small muted" }, "Đã gửi nhận xét để server phân tích.") : null,
-          resp.comment_status === "failed" ? h("p", { class: "small", role: "status" }, icon("warning"), " Chưa gửi được nhận xét (đánh giá chính vẫn đã lưu).") : null,
+          resp.comment_status === "pending" ? h("p", { class: "small muted", role: "status" }, "Nhận xét sẽ được gửi cùng đánh giá khi có kết nối.") : null,
+          resp.comment_status === "failed" ? h("p", { class: "small", role: "status" }, icon("warning"), " Server không nhận đánh giá này nên nhận xét cũng không được phân tích.") : null,
         ),
       );
       toast(resp.status === "sent" ? "Server đã nhận đánh giá." : "Đã lưu đánh giá, sẽ gửi bù khi có server.", resp.status === "sent" ? "success" : "warning");

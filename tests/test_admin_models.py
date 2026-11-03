@@ -282,8 +282,9 @@ def test_feedback_stats_breakdown_matches_jsonl(two_variants) -> None:
 
     stats = client.get("/admin-api/feedback-stats").json()
     assert stats["manual_feedback_count"] == stats["jsonl"]["manual"] == 1
-    assert stats["text_feedback_count"] == stats["jsonl"]["text"] == 1
-    assert stats["user_feedback_count"] == 2
+    # nhận xét "đúng" đi kèm đánh giá cũng được chấm, cộng với "ổn" gửi riêng
+    assert stats["text_feedback_count"] == stats["jsonl"]["text"] == 2
+    assert stats["user_feedback_count"] == 3
     assert stats["performance_feedback_count"] == stats["jsonl"]["metrics"] == 0
 
 

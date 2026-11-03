@@ -585,6 +585,8 @@ class DistributionService:
                 evaluation.reason,
                 path.name if path else "",
             )
+            if req.comment:
+                self._classify_comment(req)
         try:
             from server.db import get_session_factory, record_user_feedback as db_record_user
             with get_session_factory()() as db_session:
@@ -610,3 +612,26 @@ class DistributionService:
             received_at=entry["received_at"],
             evaluation=evaluation,
         )
+
+    def _classify_comment(self, req: ManualFeedbackRequest) -> None:
+        """Nhận xét đi kèm đánh giá được chấm như một bản /api/user-feedback.
+
+        Chỉ gọi cho feedback_id mới, nên gửi bù nhiều lần vẫn chấm một lần. Không truyền
+        feedback_id: dòng CSDL có feedback_id được tính là đánh giá thủ công (xem
+        get_feedback_statistics), dòng này phải được tính là nhận xét chữ để khớp JSONL.
+        Lỗi chỉ ghi log, không làm hỏng đánh giá chính đã lưu.
+        """
+        from server.user_feedback_handler import record_user_feedback
+
+        try:
+            record_user_feedback(
+                {
+                    "device_id": req.device_id,
+                    "distributed_variant": req.variant_id,
+                    "feedback_text": req.comment,
+                    "request_id": req.request_id,
+                },
+                self.settings.user_feedback_log,
+            )
+        except Exception as exc:
+            logger.warning("[%s] Không chấm được nhận xét: %s", req.feedback_id, exc)

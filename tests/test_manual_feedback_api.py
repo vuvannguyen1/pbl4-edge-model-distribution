@@ -68,6 +68,38 @@ def test_manual_feedback_dedup_survives_server_restart(app_factory) -> None:
         assert len(manual_lines(client)) == 2
 
 
+def text_lines(client: TestClient) -> list[dict]:
+    log = client.app.state.settings.user_feedback_log
+    if not log.is_file():
+        return []
+    return [json.loads(ln) for ln in log.read_text(encoding="utf-8").splitlines()]
+
+
+def test_manual_feedback_comment_is_classified_once(client: TestClient) -> None:
+    """Nhận xét kèm đánh giá (kể cả gửi bù) vào tab Nhận xét văn bản đúng một lần."""
+    client.post("/api/feedback", json=manual(comment="Khá tệ", rating=2, correct=False))
+    client.post("/api/feedback", json=manual(comment="Khá tệ", rating=2, correct=False))
+    [record] = text_lines(client)
+    assert record["feedback_text"] == "Khá tệ"
+    assert record["device_id"] == manual()["device_id"]
+    assert record["distributed_variant"] == manual()["variant_id"]
+    assert 1 <= record["score"] <= 5 and record["label"]
+
+    client.post("/api/feedback", json=manual(feedback_id="fb-0002", comment=None))
+    client.post("/api/feedback", json=manual(feedback_id="fb-0003", comment=""))
+    assert len(text_lines(client)) == 1  # không có nhận xét thì không ghi
+
+
+def test_manual_feedback_survives_comment_classifier_error(client: TestClient, monkeypatch) -> None:
+    def broken(*_a, **_k):
+        raise OSError("đĩa đầy")
+
+    monkeypatch.setattr("server.user_feedback_handler.record_user_feedback", broken)
+    resp = client.post("/api/feedback", json=manual(comment="ổn"))
+    assert resp.status_code == 200 and resp.json()["status"] == "accepted"
+    assert len(manual_lines(client)) == 1
+
+
 def test_manual_feedback_records_device_class_when_registered(client: TestClient) -> None:
     client.post("/api/register", json={**load_example("01"), "device_id": "phoneA"})
     client.post("/api/feedback", json=manual(correct=False, rating=2, expected_label="cat"))
