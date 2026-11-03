@@ -39,9 +39,9 @@ export default {
           state: sort,
           rows: data.devices,
           columns: [
-            { key: "device_id", label: "Thiết bị", render: (d) => h("span", { class: "mono" }, d.device_id) },
+            // lớp thiết bị nằm dưới tên (không tách cột) để bảng vừa màn 1366 px
+            { key: "device_id", label: "Thiết bị / lớp", render: (d) => h("div", { class: "stack", style: "gap:2px" }, h("span", { class: "mono" }, d.device_id), h("span", { class: "mono small muted" }, d.device_class)) },
             { key: "last_seen_age_s", label: "Hoạt động", render: (d) => h("div", { class: "stack", style: "gap:4px" }, d.active ? badge("success", "Đang hoạt động", "wifi-high") : deviceActivity(d.last_seen_age_s), h("span", { class: "small muted" }, fmt.ago(d.last_seen_age_s))) },
-            { key: "device_class", label: "Lớp thiết bị", render: (d) => h("span", { class: "mono" }, d.device_class) },
             {
               key: "ram_mb",
               label: "Cấu hình",
@@ -49,7 +49,7 @@ export default {
                 h(
                   "div",
                   { class: "stack", style: "gap:2px" },
-                  h("span", {}, `${d.platform} · ${d.cpu_arch} · RAM ${fmt.int(d.ram_mb)} MB`),
+                  h("span", {}, `${d.platform} · ${d.cpu_arch} · RAM ${fmt.num(d.ram_mb / 1024)} GB`),
                   h("span", { class: "small muted" }, d.runtime),
                 ),
             },
@@ -60,7 +60,7 @@ export default {
               sortable: false,
               render: (d) => (d.complete_variants.length ? h("div", { class: "row" }, d.complete_variants.map(variantLink)) : h("span", { class: "muted" }, "chưa có")),
             },
-            { key: "request_count", label: "Lượt xin", align: "right", render: (d) => (d.last_request_id ? h("span", {}, `${d.request_count} · `, requestLink(d.last_request_id)) : "0") },
+            { key: "request_count", label: "Lượt xin", align: "right", render: (d) => (d.last_request_id ? h("div", { class: "stack", style: "gap:2px;justify-items:end" }, String(d.request_count), h("span", { class: "small", style: "white-space:nowrap" }, requestLink(d.last_request_id))) : "0") },
           ],
         });
       },

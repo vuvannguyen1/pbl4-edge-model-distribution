@@ -118,6 +118,16 @@ def setup_logging(logs_dir: Path) -> None:
 # ---------------------------------------------------------------- helper HTTP
 
 
+class NoCacheStaticFiles(StaticFiles):
+    """Giao diện luôn hỏi lại server (ETag, trả 304 nếu không đổi): trình duyệt không chạy JS
+    cũ sau khi cập nhật code. Chỉ có Last-Modified thì Chrome tự cache theo phỏng đoán."""
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Any:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 class JSONResponse(_BaseJSONResponse):
     """JSON kèm `charset=utf-8`: PowerShell 5.1 và vài client không tự đoán UTF-8, đọc sai dấu."""
 
@@ -349,8 +359,8 @@ def create_app(settings: Settings | None = None, selector: ModelSelector | None 
 
     app.include_router(admin_router)
     # /ui/shared phải mount trước /ui (Starlette khớp theo thứ tự)
-    app.mount("/ui/shared", StaticFiles(directory=SHARED_UI_DIR), name="ui-shared")
-    app.mount("/ui", StaticFiles(directory=STATIC_DIR, html=True), name="ui")
+    app.mount("/ui/shared", NoCacheStaticFiles(directory=SHARED_UI_DIR), name="ui-shared")
+    app.mount("/ui", NoCacheStaticFiles(directory=STATIC_DIR, html=True), name="ui")
 
     @app.get("/", include_in_schema=False)
     async def root() -> RedirectResponse:

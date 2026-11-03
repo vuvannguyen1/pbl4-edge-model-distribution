@@ -266,6 +266,10 @@ def test_http_static_and_state(http_app: int) -> None:
     assert status == 200 and "text/html" in ctype and b"PBL4 Client" in body
     assert request(http_app, "GET", "/shared/css/tokens.css")[0] == 200
     assert request(http_app, "GET", "/static/js/client.js")[0] == 200
+    conn = http.client.HTTPConnection("127.0.0.1", http_app, timeout=10)
+    conn.request("GET", "/static/js/client.js")
+    assert conn.getresponse().getheader("Cache-Control") == "no-cache"
+    conn.close()
     status, _, body = request(http_app, "GET", "/api/state")
     state = json.loads(body)
     assert status == 200 and state["device_id"] == "webA" and state["server_online"] is False

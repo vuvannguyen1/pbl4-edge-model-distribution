@@ -47,6 +47,9 @@ def test_dashboard_page_served(client: TestClient) -> None:
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
     assert client.get("/ui/shared/css/tokens.css").status_code == 200
+    # trình duyệt phải hỏi lại server, không dùng JS cũ đã cache sau khi cập nhật code
+    for path in ("/ui/", "/ui/js/app.js", "/ui/shared/js/ui.js"):
+        assert client.get(path).headers["cache-control"] == "no-cache", path
 
 
 # ---------------------------------------------------------------- tổng quan

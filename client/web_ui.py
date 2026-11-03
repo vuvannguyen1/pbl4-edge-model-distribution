@@ -608,6 +608,7 @@ def make_handler(app: ClientWebApp) -> type[BaseHTTPRequestHandler]:
             self.send_response(200)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-cache")  # không chạy JS cũ sau khi cập nhật
             self.end_headers()
             self.wfile.write(data)
 
