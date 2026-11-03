@@ -325,6 +325,10 @@ export function stackedBar(parts, { label }) {
 // items: [{index, source: "server"|"peer", received, bad}]
 export function chunkGrid(items, { label }) {
   const got = items.filter((i) => i.received).length;
+  const count = (source) => {
+    const own = items.filter((i) => i.source === source);
+    return `${own.filter((i) => i.received).length}/${own.length}`;
+  };
   return h(
     "div",
     { class: "stack" },
@@ -333,25 +337,30 @@ export function chunkGrid(items, { label }) {
       { class: "chunk-grid", role: "img", "aria-label": `${label}: đã nhận ${got}/${items.length}` },
       items.map((i) => {
         const state = i.bad ? "hỏng" : i.received ? "đã nhận" : "chưa nhận";
-        return h("li", {
-          class: `chunk plan-${i.source}${i.received ? " got" : ""}${i.bad ? " bad" : ""}`,
-          title: `Miếng ${i.index}: ${i.source}, ${state}`,
-        });
+        // chữ S/P trong ô: phân biệt nguồn cả khi không phân biệt được màu
+        return h(
+          "li",
+          {
+            class: `chunk plan-${i.source}${i.received ? " got" : ""}${i.bad ? " bad" : ""}`,
+            title: `Miếng ${i.index}: ${i.source}, ${state}`,
+          },
+          i.bad ? null : i.source === "peer" ? "P" : "S",
+        );
       }),
     ),
+    h("p", { class: "small" }, `Đã nhận ${got}/${items.length} miếng · từ peer ${count("peer")} · từ server ${count("server")}`),
     chunkLegend(),
   );
 }
-
 export function chunkLegend() {
-  const item = (cls, text) => h("li", {}, h("span", { class: `chunk ${cls}`, style: "width:16px" }), text);
+  const item = (cls, text, letter = null) => h("li", {}, h("span", { class: `chunk ${cls}`, style: "width:20px", "aria-hidden": "true" }, letter), text);
   return h(
     "ul",
     { class: "legend" },
-    item("plan-server got", "Đã nhận từ server (ô đặc)"),
-    item("plan-peer got", "Đã nhận từ peer (ô sọc)"),
-    item("plan-server", "Chờ, lấy từ server"),
-    item("plan-peer", "Chờ, lấy từ peer"),
+    item("plan-server got", "S: đã nhận từ server (ô đặc)", "S"),
+    item("plan-peer got", "P: đã nhận từ peer (ô sọc)", "P"),
+    item("plan-server", "Chờ, lấy từ server", "S"),
+    item("plan-peer", "Chờ, lấy từ peer", "P"),
     item("bad", "Hỏng / bị từ chối"),
   );
 }

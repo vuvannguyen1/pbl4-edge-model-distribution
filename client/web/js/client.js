@@ -23,6 +23,7 @@ const VERDICT = { positive: ["success", "Tích cực"], neutral: ["warning", "Tr
 let state = null;
 let chosenFile = null;
 let previewUrl = null;
+let lastJobId = null; // lượt nhận diện gần nhất: nút "Tải bản đề xuất" chạy lại ảnh của nó
 
 // ---------------------------------------------------------------- trạng thái chung
 
@@ -168,7 +169,7 @@ function chooseFile(file) {
 
 function setupPicker() {
   const zone = $("dropzone");
-  $("file").addEventListener("change", (e) => chooseFile(e.target.files[0]));
+  for (const id of ["file", "camera"]) $(id).addEventListener("change", (e) => chooseFile(e.target.files[0]));
   for (const ev of ["dragenter", "dragover"]) {
     zone.addEventListener(ev, (e) => {
       e.preventDefault();
@@ -305,7 +306,12 @@ function renderResult(r) {
           ? row("Tải model", `${fmt.ms(r.download_ms)} · ${r.download.chunks_from_peer} miếng peer, ${r.download.chunks_from_server} server${r.download.bad_chunks ? `, ${r.download.bad_chunks} lần lỗi` : ""}`)
           : null,
         r.decision
-          ? row("Server quyết định", r.decision.action === "switch" ? badge("warning", `Đổi sang ${r.decision.new_variant_id}`) : badge("success", "Giữ model này"))
+          ? row(
+              "Server quyết định",
+              r.decision.action === "switch" && r.decision.new_variant_id
+                ? h("div", { class: "stack", style: "gap:var(--space-md)" }, badge("warning", `Đề xuất đổi sang ${r.decision.new_variant_id}`), switchButton(r.decision.new_variant_id))
+                : badge("success", "Giữ model này"),
+            )
           : null,
         r.decision?.reason ? row("Lý do", h("span", { class: "small" }, fmt.text(r.decision.reason))) : null,
       ),
@@ -340,7 +346,6 @@ async function followJob(jobId) {
 
 function setupDetect() {
   const form = $("detect-form");
-  const btn = $("detect-btn");
   for (const id of ["bandwidth", "deadline"]) {
     $(id).addEventListener("blur", () => fieldError(id, positiveOrEmpty(id)));
   }
@@ -367,38 +372,61 @@ function setupDetect() {
       return;
     }
     if ($("refresh").checked) qs.set("refresh", "1");
-
-    btn.disabled = true;
-    btn.setAttribute("aria-busy", "true");
-    btn.lastElementChild.textContent = "Đang nhận diện…";
-    $("progress-card").hidden = false;
-    $("result-card").hidden = true;
-    try {
-      const { job_id } = await api(`/api/detect?${qs}`, {
-        method: "POST",
-        body: sample ? undefined : chosenFile,
-        timeoutMs: 60000,
-      });
-      $("progress-card").scrollIntoView({ behavior: "smooth", block: "start" });
-      const job = await followJob(job_id);
-      if (job.status === "done") {
-        renderResult(job.result);
-        $("result-title").setAttribute("tabindex", "-1");
-        $("result-title").focus({ preventScroll: true });
-        $("result-card").scrollIntoView({ behavior: "smooth", block: "start" });
-        toast(`Nhận diện xong: ${job.result.top5[0]?.label ?? "?"}`);
-      }
-      poller.now();
-    } catch (err) {
-      const message = err instanceof ApiError && err.code === "BUSY" ? err.message : `Không bắt đầu được: ${err.message}`;
-      clear($("progress-body"), h("div", { class: "result-box", role: "alert" }, h("p", {}, message)));
-      clear($("job-status"), badge("danger", "Lỗi"));
-    } finally {
-      btn.disabled = false;
-      btn.removeAttribute("aria-busy");
-      btn.lastElementChild.textContent = "Nhận diện";
-    }
+    await runDetect(qs, sample ? undefined : chosenFile);
   });
+}
+
+// Chạy một lượt nhận diện và theo dõi đến khi xong (nút Nhận diện, nút Tải bản đề xuất).
+async function runDetect(qs, body) {
+  const btn = $("detect-btn");
+  btn.disabled = true;
+  btn.setAttribute("aria-busy", "true");
+  btn.lastElementChild.textContent = "Đang nhận diện…";
+  $("progress-card").hidden = false;
+  $("result-card").hidden = true;
+  try {
+    const { job_id } = await api(`/api/detect?${qs}`, { method: "POST", body, timeoutMs: 60000 });
+    lastJobId = job_id;
+    $("progress-card").scrollIntoView({ behavior: "smooth", block: "start" });
+    const job = await followJob(job_id);
+    if (job.status === "done") {
+      renderResult(job.result);
+      $("result-title").setAttribute("tabindex", "-1");
+      $("result-title").focus({ preventScroll: true });
+      $("result-card").scrollIntoView({ behavior: "smooth", block: "start" });
+      toast(`Nhận diện xong: ${job.result.top5[0]?.label ?? "?"}`);
+    }
+    poller.now();
+  } catch (err) {
+    const message = err instanceof ApiError && err.code === "BUSY" ? err.message : `Không bắt đầu được: ${err.message}`;
+    clear($("progress-body"), h("div", { class: "result-box", role: "alert" }, h("p", {}, message)));
+    clear($("job-status"), badge("danger", "Lỗi"));
+  } finally {
+    btn.disabled = false;
+    btn.removeAttribute("aria-busy");
+    btn.lastElementChild.textContent = "Nhận diện";
+  }
+}
+
+// Server bảo đổi model: chạy lại đúng ảnh vừa rồi, xin đích danh bản server đề xuất.
+function switchButton(variantId) {
+  const jobId = lastJobId;
+  if (!jobId) return null;
+  return h(
+    "button",
+    {
+      class: "btn btn-primary btn-sm",
+      type: "button",
+      onclick: () => {
+        const qs = new URLSearchParams({ again: jobId, preferred: variantId });
+        for (const id of ["bandwidth", "deadline"]) if ($(id).value.trim()) qs.set(id, $(id).value.trim());
+        $("preferred").value = "";
+        runDetect(qs);
+      },
+    },
+    icon("download-simple"),
+    `Tải bản đề xuất (${variantId})`,
+  );
 }
 
 // ---------------------------------------------------------------- đánh giá
@@ -513,6 +541,8 @@ function renderFeedback() {
           h("p", { class: "row" }, badge(kind, text), verdict ? badge(verdict[0], verdict[1]) : null),
           resp.evaluation ? h("p", {}, fmt.text(resp.evaluation.reason)) : null,
           resp.message ? h("p", {}, resp.message) : null,
+          resp.comment_status === "sent" ? h("p", { class: "small muted" }, "Đã gửi nhận xét để server phân tích.") : null,
+          resp.comment_status === "failed" ? h("p", { class: "small", role: "status" }, icon("warning"), " Chưa gửi được nhận xét (đánh giá chính vẫn đã lưu).") : null,
         ),
       );
       toast(resp.status === "sent" ? "Server đã nhận đánh giá." : "Đã lưu đánh giá, sẽ gửi bù khi có server.", resp.status === "sent" ? "success" : "warning");
@@ -558,6 +588,7 @@ async function resumeLastJob() {
     return;
   }
   if (!state.job) return;
+  lastJobId = state.job.job_id;
   $("progress-card").hidden = false;
   const job = await followJob(state.job.job_id);
   if (job.status === "done") renderResult(job.result);

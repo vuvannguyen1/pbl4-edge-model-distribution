@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 import pytest
+import requests
 
 from client.agent import AgentResult
 from client.feedback import FeedbackQueue
@@ -187,6 +188,34 @@ def test_feedback_offline_is_kept_pending(app: ClientWebApp) -> None:
     assert record["feedback_id"] == answer["feedback_id"]
     assert record["device_id"] == "webA"
     assert app.feedback_history()[0]["status"] == "pending"
+    assert answer["comment_status"] == "failed"  # offline: giao diện báo chưa gửi được nhận xét
+
+
+def test_comment_forwarded_to_user_feedback(app: ClientWebApp, monkeypatch) -> None:
+    calls: list[dict] = []
+
+    class Resp:
+        status_code = 200
+
+    def fake_post(url, json, timeout):
+        calls.append({"url": url, "json": json, "timeout": timeout})
+        return Resp()
+
+    monkeypatch.setattr("client.web_ui.requests.post", fake_post)
+    payload = {"variant_id": "mobilenetv2_int8", "feedback_id": "fb-1", "request_id": "r-0001"}
+    assert app._send_comment(payload, "tải hơi lâu") == "sent"
+    (call,) = calls
+    assert call["url"] == f"{OFFLINE_SERVER}/api/user-feedback"
+    assert call["timeout"] <= 3
+    assert call["json"]["feedback_text"] == "tải hơi lâu"
+    assert call["json"]["distributed_variant"] == "mobilenetv2_int8"
+    assert "feedback_id" not in call["json"]  # server chống trùng theo feedback_id
+
+    def broken_post(*_a, **_k):
+        raise requests.ConnectionError("server tắt")
+
+    monkeypatch.setattr("client.web_ui.requests.post", broken_post)
+    assert app._send_comment(payload, "tải hơi lâu") == "failed"
 
 
 @pytest.mark.parametrize(
@@ -262,3 +291,27 @@ def test_http_detect_upload_and_job(http_app: int) -> None:
     status, _, body = request(http_app, "POST", "/api/detect?name=a.txt", b"x")
     assert status == 400 and json.loads(body)["error"]["code"] == "BAD_REQUEST"
     assert request(http_app, "GET", "/api/jobs/j-9999")[0] == 404
+
+
+def test_http_detect_again_reuses_image_with_preferred(http_app: int, app: ClientWebApp) -> None:
+    seen: list = []
+
+    class RecordingAgent(FakeAgent):
+        def run(self) -> AgentResult:
+            seen.append(self.config)
+            return super().run()
+
+    app.agent_cls = RecordingAgent
+    status, _, body = request(http_app, "POST", "/api/detect?name=a.jpg", b"fake")
+    assert status == 202
+    first = json.loads(body)["job_id"]
+    assert wait_done(app.job(first))["status"] == "done"
+
+    path = f"/api/detect?again={first}&preferred=resnet50_int8&bandwidth=800"
+    status, _, body = request(http_app, "POST", path)
+    assert status == 202, body
+    assert wait_done(app.job(json.loads(body)["job_id"]))["status"] == "done"
+    assert seen[1].image == seen[0].image  # cùng ảnh, không cần gửi lại
+    assert seen[1].preferred_variant == "resnet50_int8" and seen[1].bandwidth_kbps == 800
+    status, _, body = request(http_app, "POST", "/api/detect?again=j-9999")
+    assert status == 404 and "chọn lại ảnh" in json.loads(body)["error"]["message"]

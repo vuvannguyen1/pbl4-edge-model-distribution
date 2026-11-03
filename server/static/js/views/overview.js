@@ -21,25 +21,29 @@ function kpi(iconName, label, value, note) {
   );
 }
 
+// Chưa có thiết bị/lượt xin nào thì ghi "Chưa có dữ liệu" thay cho số 0 dễ hiểu nhầm.
+const NO_DATA = () => h("span", { class: "kpi-empty" }, "Chưa có dữ liệu");
+
 function renderKpis(s) {
   const ready = s.variants.by_status.ready || 0;
   const req = s.requests.by_status;
+  const hasDevices = s.devices.registered > 0;
   return h(
     "div",
     { class: "kpi-grid" },
-    kpi("stack", "Variant sẵn sàng", `${ready}/${s.variants.total}`, "trạng thái ready trong Registry"),
+    kpi("stack", "Variant sẵn sàng", s.variants.total ? `${ready}/${s.variants.total}` : NO_DATA(), "trạng thái ready trong Registry"),
     kpi(
       "devices",
       "Thiết bị đã đăng ký",
-      fmt.int(s.devices.registered),
-      s.devices.registered ? `${fmt.int(s.devices.active)} đang hoạt động (liên lạc ≤ 30 giây hoặc đang chia sẻ)` : "Chưa có thiết bị nào",
+      hasDevices ? fmt.int(s.devices.registered) : NO_DATA(),
+      hasDevices ? `${fmt.int(s.devices.active)} đang hoạt động (liên lạc ≤ 30 giây hoặc đang chia sẻ)` : "Client chạy lệnh đầu tiên sẽ hiện ở đây",
     ),
-    kpi("share-network", "Peer đang chia sẻ", fmt.int(s.devices.sharing_peers), "có model đủ + mở cổng peer"),
+    kpi("share-network", "Peer đang chia sẻ", hasDevices ? fmt.int(s.devices.sharing_peers) : NO_DATA(), "có model đủ + mở cổng peer"),
     kpi(
       "arrows-down-up",
       "Lượt xin model",
-      fmt.int(s.requests.total),
-      `${req.downloading || 0} đang tải · ${req.complete || 0} xong · ${req.planned || 0} từ web`,
+      s.requests.total ? fmt.int(s.requests.total) : NO_DATA(),
+      s.requests.total ? `${req.downloading || 0} đang tải · ${req.complete || 0} xong · ${req.planned || 0} từ web` : "kể từ khi server khởi động",
     ),
   );
 }

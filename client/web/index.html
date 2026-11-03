@@ -37,11 +37,21 @@
         <form class="card-body stack" id="detect-form" novalidate>
           <div class="dropzone" id="dropzone">
             <input type="file" id="file" accept="image/*" class="sr-only" />
+            <input type="file" id="camera" accept="image/*" capture="environment" class="sr-only" />
             <img id="preview" alt="" hidden />
             <div class="dropzone-text" id="dropzone-text">
               <svg class="icon icon-lg" aria-hidden="true"><use href="shared/icons/sprite.svg#i-upload-simple"></use></svg>
-              <p><strong>Kéo thả ảnh vào đây</strong> hoặc</p>
-              <label for="file" class="btn btn-secondary">Chọn ảnh trên máy</label>
+              <p class="pointer-fine"><strong>Kéo thả ảnh vào đây</strong> hoặc</p>
+              <div class="row picker-buttons">
+                <label for="camera" class="btn btn-primary touch-only">
+                  <svg class="icon" aria-hidden="true"><use href="shared/icons/sprite.svg#i-camera"></use></svg>
+                  Chụp ảnh
+                </label>
+                <label for="file" class="btn btn-secondary">
+                  <svg class="icon" aria-hidden="true"><use href="shared/icons/sprite.svg#i-image"></use></svg>
+                  <span class="pointer-fine">Chọn ảnh trên máy</span><span class="touch-only">Chọn từ thư viện</span>
+                </label>
+              </div>
               <p class="hint">JPG, PNG, BMP, WEBP · tối đa 15 MB</p>
             </div>
           </div>

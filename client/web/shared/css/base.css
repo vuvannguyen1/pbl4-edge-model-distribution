@@ -331,6 +331,12 @@ code,
   font-variant-numeric: tabular-nums;
 }
 
+.kpi-empty {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
+  color: var(--color-muted-text);
+}
+
 .kpi-note {
   font-size: var(--text-sm);
   color: var(--color-muted-text);
@@ -780,10 +786,28 @@ fieldset.field {
 
 .chunk {
   position: relative;
+  display: grid;
+  place-items: center;
   aspect-ratio: 1;
   border-radius: var(--radius-sm);
   border: 2px dashed var(--color-chunk-pending);
   background: var(--color-card);
+  font-size: 0.6875rem;
+  font-weight: var(--weight-bold);
+  line-height: 1;
+}
+
+.chunk.plan-server:not(.got) {
+  color: var(--color-source-server);
+}
+
+.chunk.plan-peer:not(.got) {
+  color: var(--color-source-peer);
+}
+
+.chunk.got {
+  color: var(--color-on-primary);
+  text-shadow: 0 0 2px rgba(15, 23, 42, 0.6);
 }
 
 .chunk.plan-server:not(.got) {
