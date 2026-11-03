@@ -1,0 +1,13 @@
+DEMO TINH NANG XIN MO HINH
+python -m client.agent --server http://172.20.10.2:8000 --device-id laptopA --peer-port 0 
+
+DEMO TINH NANG GUI FEEDBACK
+
+python -m client.feedback_cli --device-id laptopA --server http://172.20.10.2:8000
+python -m client.feedback_cli --sync-pending --device-id laptopA --server http://172.20.10.2:8000
+
+DEMO TINH NANG P2P
+client
+python -m client.agent --server http://172.20.10.2:8000 --device-id laptopA --bandwidth 2000 --peer-port 9000 --serve
+python -m client.agent --server http://172.20.10.2:8000 --device-id laptopB --bandwidth 2000 --peer-port 0
+
