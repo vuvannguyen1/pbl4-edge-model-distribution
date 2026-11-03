@@ -27,11 +27,11 @@ mục 7 về hotspot và firewall).
 ```cmd
 pip install -e .[dev]
 python tools\download_models.py
-python tools\build_registry.py
 python tools\download_assets.py
 ```
 
-`build_registry.py` phải in `4 variant, 4 ready`. Máy chỉ chạy client thì chỉ cần thư mục
+`download_models.py` tải và kiểm tra đủ 10 model CV. `build_registry.py` phải khớp với
+10 variant ready trong Registry đã commit. Máy chỉ chạy client thì chỉ cần thư mục
 `client/` và `samples/imagenet_synset.txt`, cài `pip install requests onnxruntime numpy pillow`.
 
 ### 2. Server

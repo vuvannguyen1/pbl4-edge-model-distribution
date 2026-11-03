@@ -19,11 +19,11 @@ Tải model, sinh Registry, tải nhãn ImageNet và ảnh demo:
 
 ```cmd
 python tools\download_models.py
-python tools\build_registry.py
 python tools\download_assets.py
 ```
 
-- `build_registry.py` phải in `4 variant, 4 ready`. Nếu chỉ có `generated_at` thay đổi
+- `download_models.py` phải kiểm tra đủ 10 model CV. Registry 10 variant đã được commit;
+  không cần chạy lại `build_registry.py`. Nếu chỉ có `generated_at` thay đổi
   trong `registry/model_registry.json` thì không cần commit file này.
 - `download_assets.py` tạo `samples\imagenet_synset.txt` (1000 nhãn) và `samples\cat.jpg`,
   `samples\dog.jpg`. Nếu không tải được ảnh, tự chép một ảnh `.jpg` vào `samples\`.
