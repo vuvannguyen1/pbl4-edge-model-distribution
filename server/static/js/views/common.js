@@ -2,10 +2,11 @@
 import { badge, fmt, h, icon } from "../../shared/js/ui.js";
 
 // Nhiều panel dùng chung một API: gộp các lần gọi trong cùng một lượt poll thành một.
+// Sau khi ghi (đổi trạng thái, upload) gọi .invalidate() để lượt sau đọc lại thật.
 export function shared(load, ttlMs = 1000) {
   let at = 0;
   let pending = null;
-  return () => {
+  const get = () => {
     if (!pending || Date.now() - at > ttlMs) {
       at = Date.now();
       pending = load();
@@ -15,6 +16,10 @@ export function shared(load, ttlMs = 1000) {
     }
     return pending;
   };
+  get.invalidate = () => {
+    pending = null;
+  };
+  return get;
 }
 
 export function pageHead(title, description, back = null) {

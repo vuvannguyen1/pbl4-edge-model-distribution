@@ -633,6 +633,8 @@ def _upload_bytes(data: dict[str, Any]) -> tuple[bytes, str]:
             raise bad_request("file_base64 không phải base64 hợp lệ.") from exc
     if "file_path" in data:  # đường dẫn trên chính máy server (dùng cho script/test)
         src = Path(str(data["file_path"]))
+        if src.suffix.lower() != ".onnx":
+            raise bad_request("file_path phải trỏ tới một file .onnx.")
         if not src.is_file():
             raise bad_request(f"Không tìm thấy file nguồn tại {data['file_path']}")
         return src.read_bytes(), filename or src.name
@@ -662,7 +664,7 @@ async def upload_model(request: Request) -> dict[str, Any]:
                         session=session,
                     )
             except IngestionError as exc:
-                raise bad_request(exc.message) from exc
+                raise ProtocolError(exc.code, exc.message) from exc
             service.registry.load()  # variant mới thành ứng viên ngay, không cần khởi động lại
         return result
 

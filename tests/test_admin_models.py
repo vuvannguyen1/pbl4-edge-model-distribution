@@ -5,6 +5,7 @@ Mọi test dùng Registry giả trong tmp_path, vì đổi trạng thái ghi và
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 
@@ -284,3 +285,60 @@ def test_feedback_stats_breakdown_matches_jsonl(two_variants) -> None:
     assert stats["text_feedback_count"] == stats["jsonl"]["text"] == 1
     assert stats["user_feedback_count"] == 2
     assert stats["performance_feedback_count"] == stats["jsonl"]["metrics"] == 0
+
+
+# ---------------------------------------------------------------- upload model
+
+
+def upload(client: TestClient, filename: str, variant_id: str, data: bytes = b"khong phai onnx"):
+    return client.post(
+        "/admin-api/models/upload",
+        json={
+            "file_base64": base64.b64encode(data).decode("ascii"),
+            "filename": filename,
+            "metadata": {"variant_id": variant_id, "model_id": "demo", "precision": "int8"},
+        },
+    )
+
+
+def store_files(store: Path) -> set[str]:
+    return {p.relative_to(store).as_posix() for p in store.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize(
+    "filename", ["../x.onnx", "..\\x.onnx", "CV/x.onnx", "C:x.onnx", ".an.onnx"]
+)
+def test_upload_rejects_path_traversal_filename(two_variants, filename: str) -> None:
+    client, registry_path = two_variants
+    store = registry_path.parent / "store"
+    before, registry_before = store_files(store), registry_path.read_text(encoding="utf-8")
+    resp = upload(client, filename, "moi_int8")
+    assert resp.status_code == 400, resp.text
+    assert "không hợp lệ" in resp.json()["error"]["message"]
+    assert store_files(store) == before
+    assert not (registry_path.parent / "x.onnx").exists()
+    assert registry_path.read_text(encoding="utf-8") == registry_before
+
+
+def test_upload_refuses_to_overwrite_other_variant_file(two_variants) -> None:
+    client, registry_path = two_variants
+    target = registry_path.parent / "store" / "CV" / "big_fp32.onnx"
+    original = target.read_bytes()
+    resp = upload(client, "big_fp32.onnx", "moi_int8")
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["error"]["code"] == "CONFLICT"
+    assert "big_fp32" in resp.json()["error"]["message"]
+    # khác hoa thường vẫn là cùng file trên Windows
+    assert upload(client, "BIG_FP32.onnx", "moi_int8").status_code == 409
+    assert target.read_bytes() == original
+
+
+def test_upload_invalid_onnx_leaves_no_file(two_variants) -> None:
+    client, registry_path = two_variants
+    store = registry_path.parent / "store"
+    before = store_files(store)
+    resp = upload(client, "Hong.onnx", "hong_int8")
+    assert resp.status_code == 400, resp.text
+    assert "ONNX" in resp.json()["error"]["message"]
+    assert store_files(store) == before  # không còn file thật, không còn file tạm .upload
+    assert client.get("/admin-api/variants/hong_int8").status_code == 404

@@ -473,3 +473,64 @@ export class Panel {
     }
   }
 }
+
+// ---------------------------------------------------------------- hộp thoại xác nhận
+
+// <dialog> gốc của trình duyệt: giữ focus bên trong, Esc để huỷ. Trả Promise<boolean>.
+export function confirmDialog({ title, message, note = null, confirmText = "Đồng ý", danger = false }) {
+  return new Promise((resolve) => {
+    const ok = h("button", { class: `btn ${danger ? "btn-danger" : "btn-primary"}`, type: "submit", value: "ok" }, confirmText);
+    const cancel = h("button", { class: "btn btn-secondary", type: "submit", value: "cancel" }, "Huỷ");
+    const dialog = h(
+      "dialog",
+      { class: "dialog", "aria-labelledby": "dialog-title" },
+      h(
+        "form",
+        { method: "dialog", class: "stack" },
+        h("h2", { id: "dialog-title" }, title),
+        h("p", {}, message),
+        note ? h("p", { class: "state is-warning" }, icon("warning"), note) : null,
+        h("div", { class: "form-actions" }, cancel, ok),
+      ),
+    );
+    dialog.addEventListener("close", () => {
+      resolve(dialog.returnValue === "ok");
+      dialog.remove();
+    });
+    document.body.append(dialog);
+    dialog.showModal();
+    cancel.focus();
+  });
+}
+
+// ---------------------------------------------------------------- gửi kèm tiến độ
+
+// fetch() chưa báo tiến độ upload: dùng XHR. onProgress(phase, fraction):
+// "uploading" (0..1) khi đang gửi, "processing" khi đã gửi xong và chờ server xử lý.
+export function postWithProgress(url, body, { onProgress, timeoutMs = 300000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    xhr.timeout = timeoutMs;
+    xhr.setRequestHeader("Content-Type", "application/json");
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress?.("uploading", e.loaded / e.total);
+    };
+    xhr.upload.onload = () => onProgress?.("processing", 1);
+    xhr.onerror = () => reject(new ApiError("network", "Mất kết nối server khi đang gửi file."));
+    xhr.ontimeout = () => reject(new ApiError("network", "Server xử lý quá lâu (quá thời gian chờ)."));
+    xhr.onload = () => {
+      let data = null;
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch {
+        data = null;
+      }
+      if (xhr.status >= 200 && xhr.status < 300) return resolve(data);
+      const err = data && data.error;
+      reject(new ApiError("http", err ? err.message : `Server trả HTTP ${xhr.status}.`, xhr.status, err ? err.code : null));
+    };
+    onProgress?.("uploading", 0);
+    xhr.send(typeof body === "string" ? body : JSON.stringify(body));
+  });
+}
