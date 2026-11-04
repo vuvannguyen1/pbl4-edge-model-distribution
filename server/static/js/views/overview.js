@@ -1,15 +1,92 @@
-// Tổng quan hệ thống: KPI, tỉ lệ chunk peer/server, cảnh báo, cấu hình, request gần nhất.
-import { Panel, api, emptyState, fmt, h, icon, stackedBar } from "../../shared/js/ui.js";
+// Tổng quan hệ thống: link + QR cho client, KPI, tỉ lệ chunk peer/server, cảnh báo, cấu hình,
+// request gần nhất.
+import { Panel, api, emptyState, fmt, h, icon, stackedBar, toast } from "../../shared/js/ui.js";
 import {
   bandwidthText,
   card,
   pageHead,
   progressBar,
+  qrCode,
   requestLink,
   requestStatus,
   shared,
   variantLink,
 } from "./common.js";
+
+// ---------------------------------------------------------------- link cho client
+
+let chosenLink = null; // link đang hiện QR (giữ qua các lượt vẽ lại)
+
+function copyButton(url) {
+  if (!navigator.clipboard || !window.isSecureContext) return null; // http://<IP>: trình duyệt chặn clipboard
+  return h(
+    "button",
+    {
+      class: "btn btn-ghost btn-sm",
+      type: "button",
+      onclick: () => navigator.clipboard.writeText(url).then(() => toast("Đã chép link.")),
+    },
+    "Chép",
+  );
+}
+
+function renderLinks(data, redraw) {
+  const links = data.links;
+  if (!links.length) return emptyState("Không xác định được địa chỉ IP của máy server.");
+  if (!links.some((l) => l.url === chosenLink)) chosenLink = links[0].url;
+  const chosen = links.find((l) => l.url === chosenLink);
+  return h(
+    "div",
+    { class: "link-panel" },
+    h(
+      "figure",
+      { class: "qr-box" },
+      qrCode(chosen.url, `Mã QR của ${chosen.url}`) || h("p", { class: "muted" }, "Không vẽ được mã QR."),
+      h("figcaption", { class: "small muted" }, "Quét bằng camera điện thoại"),
+    ),
+    h(
+      "div",
+      { class: "stack" },
+      h("p", { class: "link-main mono wrap-anywhere" }, chosen.url),
+      h("p", { class: "small" }, chosen.note),
+      h(
+        "ul",
+        { class: "link-list" },
+        links.map((l) =>
+          h(
+            "li",
+            {},
+            h(
+              "button",
+              {
+                class: `btn btn-sm ${l.url === chosenLink ? "btn-primary" : "btn-secondary"}`,
+                type: "button",
+                "aria-pressed": String(l.url === chosenLink),
+                onclick: () => {
+                  chosenLink = l.url;
+                  redraw();
+                },
+              },
+              l.kind === "https" ? icon("camera") : icon("image"),
+              l.kind === "https" ? "HTTPS" : "HTTP",
+            ),
+            h("span", { class: "mono small wrap-anywhere" }, l.url),
+            copyButton(l.url),
+          ),
+        ),
+      ),
+      data.https_port
+        ? null
+        : h(
+            "p",
+            { class: "state is-warning small" },
+            icon("warning"),
+            "Chưa có link HTTPS nên điện thoại chỉ chụp được từng ảnh. Bật server bằng python -m server.serve để có camera trực tiếp.",
+          ),
+      h("p", { class: "small muted" }, "Điện thoại/laptop phải cùng Wi-Fi hoặc hotspot với máy server. Mở link là tự đăng ký, xin model và dùng camera; không cần cài gì."),
+    ),
+  );
+}
 
 function kpi(iconName, label, value, note) {
   return h(
@@ -36,9 +113,16 @@ function renderKpis(s) {
       "devices",
       "Thiết bị đã đăng ký",
       hasDevices ? fmt.int(s.devices.registered) : NO_DATA(),
-      hasDevices ? `${fmt.int(s.devices.active)} đang hoạt động (liên lạc ≤ 30 giây hoặc đang chia sẻ)` : "Client chạy lệnh đầu tiên sẽ hiện ở đây",
+      hasDevices
+        ? `${fmt.int(s.devices.browsers)} trình duyệt (${fmt.int(s.devices.online_browsers)} đang mở trang) · ${fmt.int(s.devices.python_clients)} client Python`
+        : "Mở link ở ô bên trên trên điện thoại để bắt đầu",
     ),
-    kpi("share-network", "Peer đang chia sẻ", hasDevices ? fmt.int(s.devices.sharing_peers) : NO_DATA(), "có model đủ + mở cổng peer"),
+    kpi(
+      "share-network",
+      "Peer đang chia sẻ",
+      hasDevices ? fmt.int(s.devices.sharing_peers) : NO_DATA(),
+      `có model đủ + đang mở trang (WebRTC) hoặc mở cổng HTTP · ${fmt.int(s.p2p_webrtc.offers)} kết nối WebRTC`,
+    ),
     kpi(
       "arrows-down-up",
       "Lượt xin model",
@@ -72,8 +156,8 @@ function renderChunks(s) {
     actualBar ||
       emptyState(
         "Chưa có số đo nào.",
-        "Số liệu có sau khi một client tải xong model và gửi feedback.",
-        "python -m client.agent --server http://<IP>:8000 --device-id laptopA",
+        "Số liệu có sau khi một client tải xong model và chạy nhận diện lần đầu (mở link /app ở ô bên trên).",
+        null,
       ),
     actual.reports ? h("p", { class: "small muted" }, `Từ ${actual.reports} lần tải đã báo cáo.`) : null,
     h("h3", {}, "Theo kế hoạch (request còn trong RAM)"),
@@ -113,7 +197,21 @@ function renderServer(s) {
     h("dt", {}, "P2P"),
     h("dd", {}, cfg.peer_enabled ? "bật" : "tắt"),
     h("dt", {}, "Ngưỡng latency (SLO)"),
-    h("dd", {}, fmt.ms(cfg.latency_slo_ms)),
+    h("dd", {}, `${fmt.ms(cfg.latency_slo_ms)} (client không khai báo chế độ dùng)`),
+    h("dt", {}, "Link client"),
+    h("dd", {}, cfg.https_port ? `/app/ · HTTPS cổng ${cfg.https_port}` : "/app/ · chưa bật HTTPS"),
+    h("dt", {}, "Tốc độ đo được"),
+    h("dd", {}, speeds(s.class_speeds)),
+  );
+}
+
+function speeds(classSpeeds) {
+  const entries = Object.entries(classSpeeds || {});
+  if (!entries.length) return h("span", { class: "muted" }, "chưa có; Selector dùng số ước lượng theo loại máy");
+  return h(
+    "ul",
+    { class: "plain-list small" },
+    entries.map(([cls, v]) => h("li", {}, h("span", { class: "mono" }, cls), ` · ${fmt.num(v.ms_per_gflop)} ms/GFLOP (${v.samples} lần đo)`)),
   );
 }
 
@@ -122,7 +220,7 @@ function renderRecent(data) {
   if (!rows.length) {
     return emptyState(
       "Chưa có lượt xin model nào.",
-      "Chạy client agent hoặc dùng “Xin model thử” ở màn Quyết định chọn model.",
+      "Mở link ở ô trên cùng trên điện thoại, hoặc dùng “Xin model thử” ở màn Quyết định chọn model.",
     );
   }
   return h(
@@ -165,6 +263,7 @@ function renderRecent(data) {
 export default {
   title: "Tổng quan",
   mount(main) {
+    const linksCard = card("Link cho điện thoại / laptop", "Mở link (hoặc quét mã QR) để xin model và phát hiện vật thể bằng camera");
     const kpis = h("div");
     const chunks = card("Nguồn chunk", "Tỉ lệ miếng model lấy từ server so với từ peer (P2P)");
     const alerts = card("Cảnh báo", "Peer gửi sai, chunk hỏng, request treo, Registry lỗi");
@@ -177,15 +276,21 @@ export default {
     main.append(
       pageHead(
         "Tổng quan hệ thống",
-        "Trạng thái phân phối model ONNX tới thiết bị edge, tự cập nhật mỗi 2 giây.",
+        "Phân phối model phát hiện vật thể (ONNX) tới điện thoại, laptop và thiết bị edge, tự cập nhật mỗi 2 giây.",
       ),
-      kpis,
+      linksCard.el,
+      h("div", { class: "section-gap" }, kpis),
       h("div", { class: "grid-3-1 section-gap" }, chunks.el, h("div", { class: "stack" }, alerts.el, server.el)),
       h("div", { class: "section-gap" }, recent.el),
     );
     const summary = shared(() => api("/admin-api/summary"));
+    const linksPanel = new Panel(linksCard.body, {
+      load: () => api("/admin-api/links"),
+      render: (data) => renderLinks(data, () => linksPanel.redraw()),
+    });
     return {
       panels: [
+        linksPanel,
         new Panel(kpis, { load: summary, render: renderKpis }),
         new Panel(chunks.body, { load: summary, render: renderChunks }),
         new Panel(alerts.body, { load: summary, render: renderAlerts }),

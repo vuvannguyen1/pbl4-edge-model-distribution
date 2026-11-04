@@ -1,6 +1,6 @@
 {
   "device_id": "phoneB",
-  "task": "image_classification",
+  "task": "object_detection",
   "bandwidth_kbps": 2000,
   "deadline_s": 60,
   "free_storage_mb": 2048,

@@ -1,0 +1,76 @@
+{
+  "model_id": "ssd_mobilenet_v1",
+  "variant_id": "ssd_mobilenet_v1_12",
+  "version": "1",
+  "artifact": {
+    "file": "CV/ssd_mobilenet_v1_12.onnx"
+  },
+  "task": {
+    "id": "object_detection",
+    "group": "CV"
+  },
+  "model": {
+    "family": "SSD-MobileNetV1",
+    "precision": "fp32",
+    "compression_level": 0
+  },
+  "contract": {
+    "input_shape": [
+      1,
+      300,
+      300,
+      3
+    ],
+    "input_dtype": "uint8",
+    "preprocessing": {
+      "normalize": {
+        "mean": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "std": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    "detection": {
+      "format": "ssd_tf",
+      "input_size": [
+        300,
+        300
+      ],
+      "resize": "stretch",
+      "layout": "NHWC",
+      "color": "RGB",
+      "pad_value": null,
+      "label_map": "coco91",
+      "outputs": [
+        "detection_boxes",
+        "detection_classes",
+        "detection_scores",
+        "num_detections"
+      ]
+    }
+  },
+  "quality": {
+    "top1_accuracy": null,
+    "map50_95": 0.23,
+    "source": "COCO val2017 theo công bố gốc, chưa đo lại trên thiết bị của nhóm"
+  },
+  "compute": {
+    "gflops": 2.4
+  },
+  "requirements": {
+    "supported_runtimes": [
+      "onnxruntime",
+      "onnxruntime-web"
+    ],
+    "minimum_ram_mb": 200
+  },
+  "provenance": {
+    "source_url": "https://github.com/onnx/models/tree/main/validated/vision/object_detection_segmentation/ssd-mobilenetv1"
+  }
+}

@@ -96,6 +96,13 @@ function tryForm(onDone) {
   const deadline = h("input", { class: "input", id: "try-deadline", type: "number", min: "1", step: "any", value: "60", required: true, "aria-describedby": "try-deadline-error" });
   const storage = h("input", { class: "input", id: "try-storage", type: "number", min: "0", step: "any", placeholder: "không giới hạn", "aria-describedby": "try-storage-hint try-storage-error" });
   const preferred = h("select", { class: "input", id: "try-preferred" }, h("option", { value: "" }, "Để Selector tự chọn"));
+  const mode = h(
+    "select",
+    { class: "input", id: "try-mode", "aria-describedby": "try-mode-hint" },
+    h("option", { value: "live" }, "Camera trực tiếp (≥ 5 khung/giây)"),
+    h("option", { value: "photo" }, "Ảnh chụp (≤ 2,5 s/ảnh)"),
+    h("option", { value: "" }, "Không khai báo (như client 1.0)"),
+  );
   const submit = h("button", { class: "btn btn-primary", type: "submit" }, icon("lightning"), "Xin model thử");
   const result = h("div", { "aria-live": "polite" });
 
@@ -109,6 +116,7 @@ function tryForm(onDone) {
       field("try-bw", "Băng thông (kbps)", bandwidth, "Bỏ trống: server dùng giới hạn của nó"),
       field("try-deadline", "Hạn tải (giây)", deadline, null, true),
       field("try-storage", "Dung lượng trống (MB)", storage, "Bỏ trống: không giới hạn"),
+      field("try-mode", "Dùng để", mode, "Server lọc model theo tốc độ suy luận ước lượng của thiết bị"),
       field("try-preferred", "Variant mong muốn", preferred),
     ),
     h("div", { class: "form-actions" }, submit, h("span", { class: "small muted" }, "Chỉ lập kế hoạch tải, không tải file. Lượt này hiện trong danh sách với nhãn “xin thử từ web”.")),
@@ -135,7 +143,7 @@ function tryForm(onDone) {
       const selected = device.value;
       device.replaceChildren(
         ...(devs.devices.length
-          ? devs.devices.map((d) => h("option", { value: d.device_id }, `${d.device_id} (${d.device_class})`))
+          ? devs.devices.map((d) => h("option", { value: d.device_id }, `${d.device_id} (${d.device_class}${d.runtime_family === "onnxruntime-web" ? ", trình duyệt" : ""})`))
           : [h("option", { value: "" }, "Chưa có thiết bị nào đăng ký")]),
       );
       if (selected) device.value = selected;
@@ -173,12 +181,13 @@ function tryForm(onDone) {
         headers: { "X-PBL4-Source": "web-ui" },
         body: {
           device_id: device.value,
-          task: "image_classification",
+          task: "object_detection",
           bandwidth_kbps: bandwidth.value === "" ? null : Number(bandwidth.value),
           deadline_s: Number(deadline.value),
           free_storage_mb: storage.value === "" ? null : Number(storage.value),
           preferred_variant: preferred.value || null,
           have_variants: [],
+          ...(mode.value ? { mode: mode.value } : {}),
         },
       });
       const counts = { server: 0, peer: 0 };
@@ -230,7 +239,7 @@ export default {
     main.append(
       pageHead(
         "Quyết định chọn model",
-        "Bộ lọc cứng loại các bản không tải kịp hạn hoặc không đủ dung lượng, rồi Selector chọn bản có top-1 cao nhất trong số còn lại.",
+        "Bộ lọc cứng loại các bản sai runtime, thiếu RAM, chạy quá ngân sách thời gian của chế độ dùng, không tải kịp hạn hoặc không đủ dung lượng; rồi Selector chọn bản có mAP cao nhất trong số còn lại.",
       ),
       formCard.el,
       h("div", { class: "grid-3-1 section-gap" }, list.el, memory.el),

@@ -31,7 +31,14 @@ from typing import Any
 from client.agent import DEFAULT_LABELS, REPO_ROOT
 from client.device_info import runtime_string
 from client.feedback import save_last_detection
-from client.inference import Classifier, InferenceResult, format_top5, load_labels
+from client.inference import (
+    Classifier,
+    DetectionRunner,
+    InferenceResult,
+    create_runner,
+    format_result,
+    is_detection,
+)
 from client.model_cache import META_FILE, ModelCache
 from client.picker import pick_images
 
@@ -104,7 +111,7 @@ def collect_images(paths: Sequence[Path]) -> list[Path]:
 class LoadedModel:
     variant: dict[str, Any]
     model_path: Path
-    classifier: Classifier
+    classifier: Classifier | DetectionRunner
     cache_dir: Path | None = None
 
 
@@ -115,8 +122,6 @@ def open_model(
     out: Printer = print,
 ) -> LoadedModel:
     """Chọn model `complete` trong cache và nạp vào ONNX Runtime (một lần)."""
-    if not labels_path.is_file():
-        raise DetectError(f"Thiếu file nhãn {labels_path}.")
     cache = ModelCache(cache_dir, runtime=runtime_string(), cpu_arch=platform.machine() or None)
     try:
         variant, model_path, why = cache.find_local_model(variant_id)
@@ -125,8 +130,10 @@ def open_model(
             f"{exc} Cache: {cache_dir}. Hãy chạy client.agent một lần khi có kết nối server."
         ) from exc
 
+    if not is_detection(variant) and not labels_path.is_file():
+        raise DetectError(f"Thiếu file nhãn {labels_path}.")
     try:
-        classifier = Classifier(model_path, variant, load_labels(labels_path))
+        classifier = create_runner(model_path, variant, labels_path)
     except Exception as exc:  # file đúng hash nhưng runtime không mở được
         cache.mark_invalid(variant, f"ONNX Runtime không mở được: {exc}")
         raise DetectError(
@@ -152,7 +159,7 @@ def classify_images(
             results.append((image, None, str(exc)))
             continue
         out(f"[{number}/{len(images)}] {image}  ({result.latency_ms_median:.2f} ms)")
-        for line in format_top5(result.top5):
+        for line in format_result(result, model.variant):
             out(line)
         results.append((image, result, None))
         if model.cache_dir is not None and result.top5:

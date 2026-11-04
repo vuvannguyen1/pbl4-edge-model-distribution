@@ -35,7 +35,7 @@ def register(client: TestClient, device_id: str, peer_port: int | None = None) -
 def ask(client: TestClient, device_id: str, **overrides) -> dict:
     body = {
         "device_id": device_id,
-        "task": "image_classification",
+        "task": "object_detection",
         "bandwidth_kbps": None,
         "deadline_s": 60,
         "free_storage_mb": None,

@@ -63,8 +63,8 @@ def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_active_roundtrip(tmp_path: Path) -> None:
     assert load_active(tmp_path) is None
-    save_active(tmp_path, "mobilenetv2_int8")
-    assert load_active(tmp_path) == "mobilenetv2_int8"
+    save_active(tmp_path, "yolox_nano")
+    assert load_active(tmp_path) == "yolox_nano"
     save_active(tmp_path, "resnet50_int8")
     assert load_active(tmp_path) == "resnet50_int8"
 
@@ -162,7 +162,7 @@ def test_collect_images(tmp_path: Path) -> None:
 @requires_models
 def test_detect_many_images_offline(tmp_path: Path, no_network: None, capsys) -> None:
     cache = tmp_path / "cache"
-    install_real_model(cache, "mobilenetv2_int8")
+    install_real_model(cache, "yolox_nano")
     folder = tmp_path / "anh"
     folder.mkdir()
     make_test_image(folder / "1.jpg")
@@ -173,30 +173,30 @@ def test_detect_many_images_offline(tmp_path: Path, no_network: None, capsys) ->
 
     output = capsys.readouterr().out
     assert code == 0
-    assert "mobilenetv2_int8" in output and "SHA-256 khớp" in output
+    assert "yolox_nano" in output and "SHA-256 khớp" in output
     assert "[1/3]" in output and "[3/3]" in output
-    assert output.count("Xác suất") == 3
+    assert output.lower().count("vật thể") >= 3  # mỗi ảnh một bảng vật thể (hoặc báo không thấy)
     assert "XONG: 3/3" in output
 
 
 @requires_models
 def test_detect_prefers_active_variant(tmp_path: Path, no_network: None) -> None:
     cache = tmp_path / "cache"
-    install_real_model(cache, "mobilenetv2_int8")
-    install_real_model(cache, "mobilenetv2_fp32")  # top-1 cao hơn int8
+    install_real_model(cache, "yolox_nano")
+    install_real_model(cache, "yolox_tiny")  # mAP cao hơn yolox_nano
     image = make_test_image(tmp_path / "anh.jpg")
 
-    assert detect([image], cache, out=lambda _: None).variant["id"] == "mobilenetv2_fp32"
-    save_active(cache, "mobilenetv2_int8")
-    assert detect([image], cache, out=lambda _: None).variant["id"] == "mobilenetv2_int8"
-    chosen = detect([image], cache, variant_id="mobilenetv2_fp32", out=lambda _: None)
-    assert chosen.variant["id"] == "mobilenetv2_fp32"
+    assert detect([image], cache, out=lambda _: None).variant["id"] == "yolox_tiny"
+    save_active(cache, "yolox_nano")
+    assert detect([image], cache, out=lambda _: None).variant["id"] == "yolox_nano"
+    chosen = detect([image], cache, variant_id="yolox_tiny", out=lambda _: None)
+    assert chosen.variant["id"] == "yolox_tiny"
 
 
 @requires_models
 def test_detect_refuses_tampered_model(tmp_path: Path, no_network: None, capsys) -> None:
     cache = tmp_path / "cache"
-    model = install_real_model(cache, "mobilenetv2_int8")
+    model = install_real_model(cache, "yolox_nano")
     with model.open("r+b") as f:
         f.seek(100)
         f.write(b"\x00\x01\x02\x03")
@@ -209,7 +209,7 @@ def test_detect_refuses_tampered_model(tmp_path: Path, no_network: None, capsys)
 @requires_models
 def test_detect_bad_image_does_not_stop_others(tmp_path: Path, no_network: None) -> None:
     cache = tmp_path / "cache"
-    install_real_model(cache, "mobilenetv2_int8")
+    install_real_model(cache, "yolox_nano")
     bad = tmp_path / "hong.jpg"
     bad.write_bytes(b"khong phai anh")
     good = make_test_image(tmp_path / "tot.jpg")
@@ -232,7 +232,7 @@ def test_agent_saves_active_then_runs_offline_when_server_down(tmp_path: Path, l
             server=server.url,
             device_id="offlineA",
             image=image,
-            bandwidth_kbps=600,  # chỉ mobilenetv2_int8 tải kịp
+            bandwidth_kbps=600,  # chỉ yolox_nano tải kịp
             peer_port=0,
             cache_dir=cache,
             runs=2,
@@ -240,7 +240,7 @@ def test_agent_saves_active_then_runs_offline_when_server_down(tmp_path: Path, l
         out=lambda _: None,
     ).run()
     assert not online.offline
-    assert load_active(cache) == "mobilenetv2_int8"
+    assert load_active(cache) == "yolox_nano"
 
     lines: list[str] = []
     offline = Agent(
@@ -255,9 +255,9 @@ def test_agent_saves_active_then_runs_offline_when_server_down(tmp_path: Path, l
         out=lines.append,
     ).run()
     assert offline.offline
-    assert offline.variant["id"] == "mobilenetv2_int8"
+    assert offline.variant["id"] == "yolox_nano"
     assert offline.model_path == online.model_path
-    assert len(offline.inference.top5) == 5
+    assert offline.inference.runs == 2
     assert offline.feedback == {} and offline.download is None
     assert any("Chuyển sang chế độ offline" in line for line in lines)
 
@@ -266,7 +266,7 @@ def test_agent_saves_active_then_runs_offline_when_server_down(tmp_path: Path, l
 def test_agent_refresh_falls_back_offline_when_server_down(tmp_path: Path) -> None:
     """--refresh buộc hỏi server; server tắt thì vẫn detect bằng model complete có sẵn."""
     cache = tmp_path / "cache"
-    install_real_model(cache, "mobilenetv2_int8")
+    install_real_model(cache, "yolox_nano")
     lines: list[str] = []
     result = Agent(
         AgentConfig(
@@ -280,9 +280,9 @@ def test_agent_refresh_falls_back_offline_when_server_down(tmp_path: Path) -> No
         ),
         out=lines.append,
     ).run()
-    assert result.offline and result.variant["id"] == "mobilenetv2_int8"
+    assert result.offline and result.variant["id"] == "yolox_nano"
     assert any("Chuyển sang chế độ offline" in line for line in lines)
-    assert install_real_model(cache, "mobilenetv2_int8").is_file(), "offline không xóa model"
+    assert install_real_model(cache, "yolox_nano").is_file(), "offline không xóa model"
 
 
 def test_agent_offline_without_cache_fails_clearly(tmp_path: Path) -> None:

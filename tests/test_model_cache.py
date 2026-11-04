@@ -79,7 +79,7 @@ def test_complete_writes_full_metadata(tmp_path: Path) -> None:
 
     meta = json.loads(cache.meta_path(variant["id"]).read_text(encoding="utf-8"))
     assert meta["status"] == STATUS_COMPLETE
-    assert meta["task"] == "image_classification"
+    assert meta["task"] == "object_detection"
     assert meta["version"] == f"sha256:{variant['sha256'][:12]}"
     assert meta["runtime"] == "onnxruntime 1.0" and meta["cpu_arch"] == "AMD64"
     assert meta["variant"] == variant  # tên file, kích thước, hash, input shape, dtype, normalize
@@ -169,8 +169,8 @@ def test_other_task_is_skipped_not_invalid(tmp_path: Path) -> None:
     cache = cache_with(tmp_path)
     install(cache, variant, data)
     cache.complete(variant)
-    detection = cache_with(tmp_path, task="object_detection")
-    assert detection.valid_models() == {}
+    classification = cache_with(tmp_path, task="image_classification")
+    assert classification.valid_models() == {}
     assert status_of(cache, variant["id"]) == STATUS_COMPLETE
 
 

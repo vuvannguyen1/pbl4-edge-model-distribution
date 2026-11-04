@@ -63,7 +63,7 @@ def test_detect_without_image_loops_until_cancel(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
     cache = tmp_path / "cache"
-    install_real_model(cache, "mobilenetv2_int8")
+    install_real_model(cache, "yolox_nano")
     single = make_test_image(tmp_path / "le.jpg")
     folder = tmp_path / "anh"
     folder.mkdir()

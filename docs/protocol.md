@@ -82,12 +82,14 @@ Trả về `size_kb` × 1024 byte dữ liệu ngẫu nhiên, **chịu cùng gi�
 | Trường | Kiểu | Bắt buộc | Ý nghĩa |
 |---|---|---|---|
 | `device_id` | string | có | Đã đăng ký ở giai đoạn 1 |
-| `task` | string | có | Hiện chỉ có `image_classification` |
+| `task` | string | có | `object_detection` (bài toán hiện tại, 10 model CV) hoặc `image_classification` |
 | `bandwidth_kbps` | number hoặc null | có | Băng thông đo được; `null` nếu chưa đo (server dùng giới hạn tốc độ đang cấu hình) |
 | `deadline_s` | number | có | Model phải tải xong trong bao nhiêu giây |
 | `free_storage_mb` | number hoặc null | có | Dung lượng trống; `null` nếu không đo được |
 | `preferred_variant` | string hoặc null | có | `null`: server tự chọn. Có giá trị: server gửi đúng bản đó (dùng khi "cùng yêu cầu" để ghép P2P, hoặc sau khi server bảo `switch`) |
 | `have_variants` | mảng string | có | Các phiên bản máy đã có đầy đủ; có thể rỗng |
+| `mode` | string hoặc null | không | `live` (camera liên tục) hoặc `photo` (ảnh chụp): server lọc model theo tốc độ suy luận ước lượng của máy. Bỏ trống như client 1.0: không lọc tốc độ. Xem mục 10 |
+| `target_fps` | number hoặc null | không | Với `live`: số khung/giây tối thiểu, mặc định 5 |
 
 **Server trả về** – HTTP 200 (`examples/04_request_response.json`)
 
@@ -104,14 +106,19 @@ Khối `variant`:
 | Trường | Kiểu | Ý nghĩa |
 |---|---|---|
 | `id` | string | `variant_id` |
-| `file` | string | Tên file để lưu, ví dụ `MobileNetV2_INT8.onnx` |
+| `file` | string | Tên file để lưu, ví dụ `yolox_nano.onnx` |
 | `base_model`, `level`, `precision` | string, integer, string | Họ model, bậc nén (0 = bản gốc), kiểu số (`fp32`, `int8`) |
 | `size_bytes` | integer | Kích thước cả file |
 | `sha256` | string | Mã băm cả file, kiểm tra lần cuối sau khi ghép |
 | `chunk_size`, `chunk_count` | integer | Kích thước miếng và số miếng |
-| `top1_accuracy` | number | Độ chính xác công bố |
-| `input_shape`, `input_dtype` | mảng integer, string | Dạng đầu vào, ví dụ `[1, 3, 224, 224]`, `float` |
-| `normalize` | object | `{"mean": [...], "std": [...]}` để chuẩn bị ảnh |
+| `top1_accuracy` | number | Độ chính xác công bố (model phân loại); `0` với model phát hiện vật thể |
+| `input_shape`, `input_dtype` | mảng integer, string | Dạng đầu vào, ví dụ `[1, 3, 416, 416]`, `float` |
+| `normalize` | object | `{"mean": [...], "std": [...]}` để chuẩn bị ảnh: `(x/255 - mean)/std` |
+| `task` | string hoặc null | Tuỳ chọn. `object_detection` |
+| `map50_95` | number hoặc null | Tuỳ chọn. mAP COCO (0 đến 1), Selector xếp hạng theo trường này |
+| `gflops` | number hoặc null | Tuỳ chọn. Chi phí tính toán một lượt suy luận |
+| `runtimes` | mảng string hoặc null | Tuỳ chọn. `onnxruntime` (client Python), `onnxruntime-web` (trình duyệt) |
+| `detection` | object hoặc null | Tuỳ chọn. Cách tiền xử lý và giải mã đầu ra (mục 10.2) |
 
 Mỗi phần tử của `plan`:
 
@@ -122,7 +129,7 @@ Mỗi phần tử của `plan`:
 | `size_bytes` | integer | Kích thước miếng |
 | `sha256` | string | Mã băm của miếng, **lấy từ Registry của server** |
 | `source` | string | `server` hoặc `peer` |
-| `url` | string | Địa chỉ đầy đủ để tải miếng |
+| `url` | string | Địa chỉ đầy đủ để tải miếng: `http://...` (server, peer Python) hoặc `webrtc://<device_id>/chunks/...` (peer trình duyệt, mục 10.3) |
 | `fallback_url` | string hoặc null | Với `peer`: địa chỉ tải lại từ server khi peer lỗi. Với `server`: `null` |
 
 ## 4. Giai đoạn 3 – Tải miếng và báo tiến độ
@@ -269,10 +276,73 @@ Ví dụ: `android_arm64_4-8gb`, `ios_browser_arm64_4-8gb`. Tách theo `platform
 
 Model Selector của Lực được gắn vào server qua một interface chung. Khi Selector chưa sẵn sàng hoặc trả lỗi, server dùng bộ chọn rule-based (theo `tong_quan_he_thong.md`, mục 7.5), nên việc huấn luyện không chặn luồng phân phối.
 
-## 10. Lịch sử thay đổi
+## 10. Mở rộng cho phát hiện vật thể và client trình duyệt
+
+Mọi trường dưới đây là **tuỳ chọn**: client 1.0 không gửi thì server xử lý như trước, và client
+1.0 bỏ qua được các trường mới trong khối `variant`. `protocol_version` vẫn là `"1.0"`.
+
+### 10.1 Đăng ký: `capabilities`
+
+`POST /api/register` nhận thêm `capabilities` (trang `/app` luôn gửi):
+
+| Trường | Kiểu | Ý nghĩa |
+|---|---|---|
+| `threads` | integer | Số luồng suy luận (WASM đa luồng khi trang mở qua HTTPS) |
+| `webgpu` | boolean | Trình duyệt có WebGPU |
+| `camera` | boolean | Dùng được camera trực tiếp (cần HTTPS) |
+| `p2p` | string | `webrtc` (trình duyệt), `http` (có `peer_port`) hoặc `none` |
+
+`platform` thêm giá trị `web_desktop` (trình duyệt trên laptop/PC). Trình duyệt và client Python
+luôn khác lớp thiết bị (khác `platform`), nên không bao giờ được ghép P2P với nhau.
+
+### 10.2 Chọn model theo chế độ dùng và khối `detection`
+
+Với `mode`, server tính ngân sách thời gian mỗi lượt suy luận: `live` = `1000 / target_fps` ms
+(mặc định 200 ms), `photo` = 2500 ms. Thời gian ước lượng = `gflops × ms/GFLOP` của lớp thiết bị:
+lấy trung vị số đo thật từ `/api/feedback` của các máy cùng lớp; chưa có thì ước lượng theo runtime
+(trình duyệt điện thoại 140, trình duyệt laptop 70, Python laptop 12 ms/GFLOP; WASM đa luồng
+nhanh hơn ~50 % mỗi luồng, tối đa 4 luồng). Bộ lọc cứng loại bản sai runtime, cần hơn nửa RAM
+thiết bị hoặc chạy quá ngân sách; nếu mọi bản còn lại đều quá ngân sách thì giữ bản nhanh nhất.
+Selector chọn bản có `map50_95` cao nhất. Feedback có `fps`, `detections`; với lượt có `mode`,
+server đề xuất `switch` sang bản nhẹ hơn khi latency vượt 1,5 × ngân sách, hoặc **nâng cấp** khi
+một bản tốt hơn vẫn chạy trong 80 % ngân sách và tải kịp hạn.
+
+Khối `detection` (từ Model Card, `metadata/model_cards/`):
+
+| Trường | Ý nghĩa |
+|---|---|
+| `format` | `yolox` (đầu ra thô 1×N×85, tự giải mã lưới stride 8/16/32), `ssd_tf` (hộp chuẩn hoá, id COCO 1..90), `faster_rcnn` (hộp theo pixel, nhãn 1..80), `retinanet` (cls/box P3–P7, tự sinh anchor) |
+| `input_size` | `[H, W]` đưa vào model |
+| `resize` | `letterbox` (thu theo cạnh dài, đặt góc trên trái), `stretch`, `keep_ratio` (với `min_side`, `max_side`, `size_divisor`) |
+| `layout`, `color` | `NCHW`/`NHWC`/`CHW`; `RGB`/`BGR` |
+| `pad_value` | Màu đệm trước khi chuẩn hoá (YOLOX: 114); `null`: đệm 0 sau chuẩn hoá |
+| `label_map`, `class_offset` | `coco80`/`coco91`; độ lệch chỉ số lớp |
+
+Cài đặt tham chiếu: `client/detection.py` (Python), `server/webclient/js/worker.js` (trình duyệt).
+
+### 10.3 P2P giữa trình duyệt: WebRTC
+
+Trình duyệt không mở cổng được, nên miếng đi qua WebRTC DataChannel, server chỉ làm signaling:
+
+| Endpoint | Ý nghĩa |
+|---|---|
+| `POST /api/announce` | `{device_id, variants: [{variant_id, sha256}]}`: trang mở lại với model trong kho trình duyệt; SHA-256 khớp Registry thì server ghi nhận "đã có đủ" để giao làm peer. Trả `{ok, accepted, rejected}` |
+| `POST /api/signal` | `{from_device, to_device, type: offer/answer/candidate/bye, session, data}`: chuyển tiếp SDP, trả `{ok, delivered}`. `bye` gửi cho chính mình = đóng trang |
+| `GET /api/signal/{device_id}?wait=20` | Long-poll lấy tin nhắn. Trang `/app` gọi liên tục: máy chỉ được giao làm peer khi đang long-poll (hoặc vừa gọi trong 12 giây) |
+
+Miếng peer trình duyệt có `url` `webrtc://<device_id>/chunks/<variant_id>/<index>` và `fallback_url`
+về server như peer HTTP. Trên DataChannel `chunks`: bên xin gửi
+`{"op":"get","req","variant","index","offset","size"}`; bên có model trả
+`{"op":"chunk","req","size"}` rồi các khối nhị phân đủ `size` byte (hoặc `{"op":"error"}`). Bên
+nhận kiểm SHA-256 như miếng từ server. Chỉ báo `bad_chunks` khi **sai hash** (server ngừng giao
+peer đó); không nối được peer thì lấy lại từ `fallback_url` mà không báo, vì lỗi mạng của một
+trình duyệt không có nghĩa peer hỏng.
+
+## 11. Lịch sử thay đổi
 
 | Phiên bản | Ngày | Nội dung |
 |---|---|---|
 | 1.0 | 13/10/2026 | Bản đầu tiên cho task Implement |
 | 1.0 | 14/10/2026 | Sửa tài liệu, **không đổi định dạng tin nhắn**: server dùng Python FastAPI; danh mục model là Registry `registry/model_registry.json` thay cho `models/manifest.json`; `UNKNOWN_VARIANT` áp dụng cả với phiên bản chưa `ready`; cập nhật phân công |
+| 1.0 | 04/11/2026 | Chuyển sang bài toán phát hiện vật thể (10 model CV). Chỉ **thêm trường tuỳ chọn**, client cũ không vỡ: `capabilities`, `mode`, `target_fps`, khối `detection` và chất lượng `map50_95`, `platform` `web_desktop`, peer `webrtc://`, `/api/announce`, `/api/signal` (mục 10) |
 | 1.0 | 14/10/2026 | **Bổ sung, tương thích ngược**: `/api/feedback` nhận thêm đánh giá của người dùng (có `feedback_id`, mẫu 10 và 11); các tin nhắn cũ giữ nguyên |

@@ -113,6 +113,14 @@ function detailView(main, rid) {
             row(r.completed_at ? "Hoàn tất" : "Cập nhật cuối", fmt.time(r.completed_at || r.updated_at)),
             row("Thời gian", fmt.s(elapsed(r))),
             row("Miếng lỗi", r.bad_count ? badge("danger", `${r.bad_count} miếng`) : "0"),
+            row("Chế độ dùng", r.mode ? `${r.mode === "live" ? "Camera trực tiếp" : "Ảnh chụp"} · ngân sách ${fmt.ms(r.budget_ms)}` : "không khai báo"),
+            row("Chạy trên", r.runtime_family === "onnxruntime-web" ? "Trình duyệt (onnxruntime-web)" : "Client Python (onnxruntime)"),
+            r.metrics
+              ? row(
+                  "Số đo client gửi",
+                  `suy luận ${fmt.ms(r.metrics.latency_ms_median)}${r.metrics.fps ? ` · ${fmt.num(r.metrics.fps)} khung/giây` : ""} · ${r.metrics.chunks_from_peer} miếng từ peer, ${r.metrics.chunks_from_server} từ server`,
+                )
+              : null,
           ),
       }),
       new Panel(sources.body, {
@@ -136,7 +144,8 @@ function detailView(main, rid) {
                   { class: "alert-list" },
                   peers.map((origin) => {
                     const banned = r.plan.some((p) => p.origin === origin && p.origin_banned);
-                    return h("li", { class: banned ? "is-danger" : "is-neutral" }, h("span", { class: "mono" }, origin), banned ? " · đã bị cấm (gửi sai hash)" : "");
+                    const kind = origin.startsWith("webrtc://") ? "WebRTC (trình duyệt)" : "HTTP (client Python)";
+                    return h("li", { class: banned ? "is-danger" : "is-neutral" }, h("span", { class: "mono" }, origin), ` · ${kind}`, banned ? " · đã bị cấm (gửi sai hash)" : "");
                   }),
                 )
               : h("p", { class: "small muted" }, "Không có peer nào cùng lớp đã có đủ model lúc lập plan."),

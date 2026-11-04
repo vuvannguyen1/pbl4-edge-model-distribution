@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from server.registry import RegistryVariant
 
@@ -47,6 +47,22 @@ def estimate_download_s(size_bytes: int, bandwidth_kbps: float | None) -> float 
     return round(download_seconds(size_bytes, bandwidth_kbps), 1)
 
 
+def quality_number(variant: RegistryVariant) -> str:
+    """mAP dạng phần trăm ("25.8 %"), top-1 giữ dạng cũ ("0.7180")."""
+    if variant.map50_95 is not None:
+        return f"{variant.map50_95 * 100:.1f} %"
+    return f"{variant.top1_accuracy:.4f}"
+
+
+def quality_text(variant: RegistryVariant) -> str:
+    """Chất lượng cho câu lý do: "mAP 25.8 %" hoặc "top-1 0.7180"."""
+    return f"{variant.quality_label} {quality_number(variant)}"
+
+
+# Model cần tối đa nửa RAM thiết bị: phần còn lại cho hệ điều hành, trình duyệt, camera
+RAM_SHARE = 0.5
+
+
 @dataclass(frozen=True)
 class SelectionContext:
     """Thông tin thiết bị và nội dung /api/request dùng để chọn variant."""
@@ -62,12 +78,20 @@ class SelectionContext:
     deadline_s: float
     free_storage_mb: float | None
     class_preferred_variant: str | None = None  # ghi nhớ từ feedback của lớp thiết bị
+    # Phát hiện vật thể: runtime của thiết bị, chế độ dùng và ngân sách thời gian mỗi khung
+    runtime_family: str | None = None  # "onnxruntime-web" | "onnxruntime"; None: không lọc
+    mode: str | None = None  # "live" | "photo" | None (client 1.0)
+    budget_ms: float | None = None  # thời gian suy luận tối đa mỗi khung/ảnh
+    ms_per_gflop: float | None = None  # tốc độ ước lượng hoặc đo thật của lớp thiết bị
+    speed_source: str = ""  # "ước lượng" | "đo thực tế" (cho câu lý do)
 
 
 @dataclass(frozen=True)
 class Candidate:
     variant: RegistryVariant
     estimated_download_s: float | None
+    estimated_latency_ms: float | None = None
+    over_budget: bool = False  # không bản nào đạt ngân sách: đây là bản nhanh nhất còn lại
 
     @property
     def variant_id(self) -> str:
@@ -103,15 +127,39 @@ class NoVariantFits(Exception):
 def apply_hard_filters(
     variants: Sequence[RegistryVariant], context: SelectionContext
 ) -> tuple[list[Candidate], list[Rejection]]:
-    """Loại variant sai task, không đủ dung lượng hoặc không tải kịp hạn.
+    """Loại variant sai task/runtime, thiếu RAM, không đủ dung lượng, không tải kịp hạn hoặc
+    chạy quá ngân sách thời gian của chế độ dùng.
+
+    Tốc độ chỉ là ước lượng (hoặc đo trên vài máy cùng lớp), nên bộ lọc tốc độ không bao giờ
+    loại hết: nếu mọi bản đạt các điều kiện khác đều chậm hơn ngân sách, giữ lại bản nhanh nhất
+    (`over_budget=True`) để thiết bị vẫn có model dùng.
 
     `variants` lấy từ Registry (chỉ bản `ready`). Trả (ứng viên, bị loại kèm lý do).
     """
     candidates: list[Candidate] = []
     rejections: list[Rejection] = []
+    too_slow: list[tuple[Candidate, Rejection]] = []
     for variant in variants:
         if variant.task_id != context.task:
             rejections.append(Rejection(variant.variant_id, f"khác task ({variant.task_id})"))
+            continue
+        if context.runtime_family and not variant.supports_runtime(context.runtime_family):
+            rejections.append(
+                Rejection(
+                    variant.variant_id,
+                    f"không chạy được trên {context.runtime_family} "
+                    f"(chỉ {', '.join(variant.runtimes)})",
+                )
+            )
+            continue
+        if variant.minimum_ram_mb and variant.minimum_ram_mb > context.ram_mb * RAM_SHARE:
+            rejections.append(
+                Rejection(
+                    variant.variant_id,
+                    f"cần {variant.minimum_ram_mb} MB RAM, vượt {fmt_num(RAM_SHARE * 100, 0)} % "
+                    f"RAM thiết bị ({context.ram_mb} MB)",
+                )
+            )
             continue
         if (
             context.free_storage_mb is not None
@@ -137,7 +185,26 @@ def apply_hard_filters(
                     )
                 )
                 continue
-        candidates.append(Candidate(variant, estimate))
+        latency = (
+            variant.gflops * context.ms_per_gflop
+            if variant.gflops and context.ms_per_gflop
+            else None
+        )
+        if latency is not None and context.budget_ms and latency > context.budget_ms:
+            unit = "khung" if context.mode == "live" else "ảnh"
+            reason = (
+                f"suy luận {context.speed_source} {fmt_num(latency, 0)} ms/{unit} > "
+                f"ngân sách {fmt_num(context.budget_ms, 0)} ms"
+            )
+            candidate = Candidate(variant, estimate, latency)
+            too_slow.append((candidate, Rejection(variant.variant_id, reason)))
+            continue
+        candidates.append(Candidate(variant, estimate, latency))
+    if not candidates and too_slow:
+        fastest, _ = min(too_slow, key=lambda pair: pair[0].estimated_latency_ms or 0)
+        candidates.append(replace(fastest, over_budget=True))
+        too_slow = [pair for pair in too_slow if pair[0] is not fastest]
+    rejections += [rejection for _, rejection in too_slow]
     return candidates, rejections
 
 
@@ -169,9 +236,11 @@ class ModelSelector(ABC):
 
 
 def _describe(candidate: Candidate) -> str:
-    text = f"top-1 {candidate.variant.top1_accuracy:.4f}"
+    text = quality_text(candidate.variant)
     if candidate.estimated_download_s is not None:
         text += f", tải ước tính {fmt_num(candidate.estimated_download_s)} s"
+    if candidate.estimated_latency_ms is not None:
+        text += f", suy luận ~{fmt_num(candidate.estimated_latency_ms, 0)} ms"
     return text
 
 
@@ -180,8 +249,9 @@ class RuleBasedSelector(ModelSelector):
 
     1. Nếu lớp thiết bị đã được ghi nhớ một variant (từ feedback) và variant đó
        vẫn qua bộ lọc cứng, chọn nó để các máy cùng lớp dùng chung file (P2P).
-    2. Ngược lại chọn ứng viên có `top1_accuracy` cao nhất; bằng nhau thì file nhỏ hơn.
-    Không dùng tỉ lệ accuracy/byte vì tỉ lệ đó luôn chọn variant nhỏ nhất.
+    2. Ngược lại chọn ứng viên có chất lượng cao nhất (mAP với phát hiện vật thể, top-1 với
+       phân loại ảnh); bằng nhau thì file nhỏ hơn.
+    Không dùng tỉ lệ chất lượng/byte vì tỉ lệ đó luôn chọn variant nhỏ nhất.
     """
 
     version = "rule-v1"
@@ -208,7 +278,7 @@ class RuleBasedSelector(ModelSelector):
 
         ranked = sorted(
             candidates,
-            key=lambda c: (-c.variant.top1_accuracy, c.variant.size_bytes, c.variant_id),
+            key=lambda c: (-c.variant.quality, c.variant.size_bytes, c.variant_id),
         )
         chosen = ranked[0]
         if context.bandwidth_kbps:
@@ -218,16 +288,29 @@ class RuleBasedSelector(ModelSelector):
             )
         else:
             head = "Chưa biết băng thông nên không kiểm tra hạn tải"
-        reason = (
-            f"{head}: chọn {chosen.variant_id} ({_describe(chosen)}), "
-            f"top-1 cao nhất trong {len(candidates)} ứng viên đạt điều kiện"
-        )
+        if context.budget_ms and context.ms_per_gflop:
+            use = "camera trực tiếp" if context.mode == "live" else "ảnh chụp"
+            head += (
+                f", {use} ngân sách {fmt_num(context.budget_ms, 0)} ms (tốc độ "
+                f"{context.speed_source} {fmt_num(context.ms_per_gflop)} ms/GFLOP)"
+            )
+        label = chosen.variant.quality_label
+        if chosen.over_budget:
+            reason = (
+                f"{head}: không bản nào chạy kịp ngân sách trên máy này, chọn bản nhanh nhất "
+                f"{chosen.variant_id} ({_describe(chosen)})"
+            )
+        else:
+            reason = (
+                f"{head}: chọn {chosen.variant_id} ({_describe(chosen)}), "
+                f"{label} cao nhất trong {len(candidates)} ứng viên đạt điều kiện"
+            )
         rejected = tuple(
             Rejection(
                 c.variant_id,
-                f"top-1 {c.variant.top1_accuracy:.4f} thấp hơn {chosen.variant.top1_accuracy:.4f}"
-                if c.variant.top1_accuracy < chosen.variant.top1_accuracy
-                else "cùng top-1 nhưng file lớn hơn",
+                f"{label} {quality_number(c.variant)} thấp hơn {quality_number(chosen.variant)}"
+                if c.variant.quality < chosen.variant.quality
+                else f"cùng {label} nhưng file lớn hơn",
             )
             for c in ranked[1:]
         )

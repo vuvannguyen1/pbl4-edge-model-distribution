@@ -11,7 +11,8 @@ Với mỗi file .onnx tìm được, script:
   1. ghép với Model Card có artifact.file trùng đường dẫn tương đối;
   2. tự tính size_bytes, SHA-256 toàn file và SHA-256 từng chunk 1 MiB;
   3. mở bằng ONNX Runtime, so input với contract trong Model Card;
-  4. đặt status = "ready" nếu hợp lệ, ngược lại "validation_failed" kèm lý do.
+  4. model phát hiện vật thể: chạy thử trên samples/dog.jpg, phải ra vật thể "dog";
+  5. đặt status = "ready" nếu hợp lệ, ngược lại "validation_failed" kèm lý do.
 Registry được ghi nguyên tử (ghi file tạm rồi đổi tên).
 """
 
@@ -44,7 +45,7 @@ REQUIRED_CARD_FIELDS = [
     ("contract", "preprocessing"),
 ]
 
-ORT_DTYPES = {"tensor(float)": "float"}
+ORT_DTYPES = {"tensor(float)": "float", "tensor(uint8)": "uint8"}
 
 
 def get_field(data: dict[str, Any], path: tuple[str, ...]) -> Any:
@@ -152,11 +153,41 @@ def validate_onnx(path: Path, card: dict[str, Any]) -> tuple[list[str], dict[str
     return errors, info
 
 
+def smoke_test_detection(path: Path, card: dict[str, Any]) -> list[str]:
+    """Chạy model trên samples/dog.jpg bằng client.detection; phải thấy "dog"."""
+    repo_root = Path(__file__).resolve().parent.parent
+    image_path = repo_root / "samples" / "dog.jpg"
+    if not image_path.is_file():
+        return []  # thiếu ảnh mẫu (tools/download_assets.py): bỏ qua, không chặn
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    try:
+        from PIL import Image
+
+        from client.detection import Detector
+
+        variant = {
+            "id": card["variant_id"],
+            "normalize": card["contract"]["preprocessing"].get("normalize"),
+            "detection": card["contract"]["detection"],
+        }
+        with Image.open(image_path) as image:
+            detections, _ = Detector(path, variant).detect_image(image)
+    except Exception as exc:  # decoder lỗi = client cũng sẽ lỗi
+        return [f"kiểm thử nhanh lỗi: {exc}"]
+    if not any(d.label == "dog" for d in detections):
+        found = ", ".join(f"{d.label} {d.score:.2f}" for d in detections[:3]) or "không có"
+        return [f"kiểm thử nhanh: không nhận ra 'dog' trong samples/dog.jpg (thấy: {found})"]
+    return []
+
+
 def build_entry(
     onnx_path: Path, rel_path: str, card: dict[str, Any]
 ) -> tuple[dict[str, Any], list[str]]:
     sha256, chunks = hash_file(onnx_path)
     validation_errors, runtime_info = validate_onnx(onnx_path, card)
+    if not validation_errors and get_field(card, ("contract", "detection")) is not None:
+        validation_errors += smoke_test_detection(onnx_path, card)
 
     card_status = get_field(card, ("lifecycle", "status"))
     if card_status in MANUAL_STATUSES:
@@ -167,7 +198,15 @@ def build_entry(
         status = "ready"
 
     warnings: list[str] = []
-    if get_field(card, ("quality", "top1_accuracy")) is None:
+    task_id = card["task"]["id"]
+    if task_id == "object_detection":
+        if get_field(card, ("quality", "map50_95")) is None:
+            warnings.append("chưa có mAP đã xác thực")
+        if get_field(card, ("contract", "detection")) is None:
+            validation_errors.append("thiếu contract.detection: client không biết cách giải mã")
+            if status == "ready":
+                status = "validation_failed"
+    elif get_field(card, ("quality", "top1_accuracy")) is None:
         warnings.append("chưa có top1_accuracy đã xác thực")
 
     contract = card["contract"]
@@ -175,7 +214,7 @@ def build_entry(
         "variant_id": card["variant_id"],
         "model_id": card["model_id"],
         "version": card["version"],
-        "task_id": card["task"]["id"],
+        "task_id": task_id,
         "file": onnx_path.name,
         "storage_path": rel_path,  # nội bộ, không trả cho client
         "base_model": card["model_id"],
@@ -187,12 +226,16 @@ def build_entry(
         "chunk_size": CHUNK_SIZE,
         "chunk_count": len(chunks),
         "chunks": chunks,
-        "top1_accuracy": get_field(card, ("quality", "top1_accuracy")),
+        # bài toán phát hiện vật thể không có top-1: để 0, chất lượng nằm ở map50_95
+        "top1_accuracy": get_field(card, ("quality", "top1_accuracy")) or 0.0,
+        "map50_95": get_field(card, ("quality", "map50_95")),
+        "gflops": get_field(card, ("compute", "gflops")),
         "input_shape": contract["input_shape"],
         "input_dtype": contract["input_dtype"],
         "normalize": contract["preprocessing"].get("normalize"),
         "preprocessing": contract["preprocessing"],
         "output_contract": contract.get("output_contract"),
+        "detection": contract.get("detection"),
         "supported_runtimes": get_field(card, ("requirements", "supported_runtimes")),
         "minimum_ram_mb": get_field(card, ("requirements", "minimum_ram_mb")),
         "runtime_info": runtime_info,
@@ -211,6 +254,9 @@ def write_atomic(path: Path, data: dict[str, Any]) -> None:
 
 
 def main() -> int:
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     repo_root = Path(__file__).resolve().parent.parent
     store_dir = (repo_root / "models").resolve()
     cards_dir = repo_root / "metadata" / "model_cards"

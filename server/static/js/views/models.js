@@ -118,11 +118,13 @@ function uploadForm(onDone) {
     fileName,
   );
   const variant = input("up-variant", { required: true, maxlength: "64", autocomplete: "off", spellcheck: "false", "aria-describedby": "up-variant-hint" });
-  const model = input("up-model", { required: true, maxlength: "64", autocomplete: "off", placeholder: "mobilenetv2" });
-  const family = input("up-family", { maxlength: "64", autocomplete: "off", placeholder: "MobileNetV2" });
+  const model = input("up-model", { required: true, maxlength: "64", autocomplete: "off", placeholder: "yolox" });
+  const family = input("up-family", { maxlength: "64", autocomplete: "off", placeholder: "YOLOX" });
   const precision = h("select", { class: "input", id: "up-precision" }, ["int8", "fp16", "fp32"].map((p) => h("option", { value: p }, p)));
   const level = input("up-level", { type: "number", min: "0", step: "1", value: "1", inputmode: "numeric" });
-  const top1 = input("up-top1", { type: "number", min: "0", max: "100", step: "0.1", inputmode: "decimal", placeholder: "70,2" });
+  const top1 = input("up-top1", { type: "number", min: "0", max: "100", step: "0.1", inputmode: "decimal", placeholder: "25,8" });
+  const gflops = input("up-gflops", { type: "number", min: "0", step: "any", inputmode: "decimal", placeholder: "1,08" });
+  const web = h("input", { type: "checkbox", id: "up-web", checked: true });
   const version = input("up-version", { maxlength: "16", value: "1.0" });
   const submit = h("button", { class: "btn btn-primary", type: "submit" }, icon("upload-simple"), h("span", {}, "Tải lên và kiểm định"));
   const progress = h("div", { "aria-live": "polite" });
@@ -163,12 +165,14 @@ function uploadForm(onDone) {
       "div",
       { class: "form-grid" },
       field("up-file", "File ONNX", filePicker, "Server mở thử bằng ONNX Runtime; file hỏng bị từ chối và không lưu lại.", true),
-      field("up-variant", "Mã variant", variant, "Chữ thường, số, dấu _ (vd. mobilenetv2_demo). Không trùng tên file của variant khác.", true),
+      field("up-variant", "Mã variant", variant, "Chữ thường, số, dấu _ (vd. yolox_nano_demo). Bắt đầu bằng yolox_, ssd_mobilenet hoặc fasterrcnn để client biết cách giải mã. Không trùng tên file của variant khác.", true),
       field("up-model", "Model gốc (model_id)", model, null, true),
       field("up-family", "Họ model", family),
       field("up-precision", "Precision", precision),
       field("up-level", "Mức nén (level)", level),
-      field("up-top1", "Top-1 (%)", top1, "Độ chính xác công bố, để Selector so sánh"),
+      field("up-top1", "mAP COCO (%)", top1, "Độ chính xác công bố (mAP@0.5:0.95), để Selector so sánh"),
+      field("up-gflops", "GFLOPs", gflops, "Chi phí tính toán một lượt; để trống thì Selector không lọc theo tốc độ"),
+      h("label", { class: "row" }, web, "Chạy được trên trình duyệt (trang /app)"),
       field("up-version", "Phiên bản", version),
     ),
     h("div", { class: "form-actions" }, submit),
@@ -205,7 +209,10 @@ function uploadForm(onDone) {
           family: family.value.trim() || model.value.trim(),
           precision: precision.value,
           level: Number(level.value),
-          top1_accuracy: top1Value / 100,
+          top1_accuracy: 0,
+          map50_95: top1Value / 100,
+          ...(gflops.value === "" ? {} : { gflops: Number(gflops.value) }),
+          supported_runtimes: web.checked ? ["onnxruntime", "onnxruntime-web"] : ["onnxruntime"],
           version: version.value.trim() || "1.0",
         },
       };
@@ -248,15 +255,24 @@ function uploadForm(onDone) {
   return form;
 }
 
+// Model chạy được trên trình duyệt (trang /app) hay chỉ client Python
+function runtimeBadge(v) {
+  const runtimes = v.supported_runtimes || [];
+  if (!runtimes.length) return h("span", { class: "muted" }, "không khai báo");
+  return runtimes.includes("onnxruntime-web")
+    ? badge("success", "Web + Python", "devices")
+    : badge("neutral", "Chỉ Python", "terminal-window");
+}
+
 function listView(main, ctx) {
   const table = card("Các phiên bản trong Registry", "Đọc trực tiếp registry/model_registry.json. Tắt một variant thì Selector bỏ qua nó ngay.");
   const upload = card("Thêm model mới", "Tải file .onnx lên: server kiểm định, chia miếng 1 MiB, ghi Registry và CSDL. Không cần khởi động lại.");
   const size = card("Kích thước file", "Càng nhỏ càng tải nhanh trên mạng yếu");
-  const acc = card("Độ chính xác top-1", "Số công bố của ONNX Model Zoo, chưa tự đo lại");
+  const acc = card("Độ chính xác mAP (COCO)", "Số công bố của YOLOX và ONNX Model Zoo, chưa tự đo lại");
   main.append(
     pageHead(
       "Registry model",
-      "Mỗi variant là một bản nén của một họ model. Selector chọn trong các bản ready dựa trên băng thông, hạn tải và dung lượng.",
+      "10 model phát hiện vật thể (YOLOX, SSD, Faster R-CNN, RetinaNet). Selector chọn trong các bản ready theo băng thông, hạn tải, dung lượng, RAM, runtime và tốc độ suy luận ước lượng của thiết bị.",
     ),
     table.el,
     h("div", { class: "grid-2 section-gap" }, size.el, acc.el),
@@ -284,13 +300,12 @@ function listView(main, ctx) {
         state: sort,
         rows: data.variants,
         columns: [
-          { key: "variant_id", label: "Variant", render: (v) => variantLink(v.variant_id) },
-          { key: "precision", label: "Precision", render: (v) => h("span", { class: "tag" }, v.precision) },
+          { key: "variant_id", label: "Variant", render: (v) => h("span", { class: "row", style: "gap:4px 8px" }, variantLink(v.variant_id), h("span", { class: "tag" }, v.precision)) },
           { key: "size_bytes", label: "Kích thước", align: "right", render: (v) => fmt.mb(v.size_bytes) },
-          { key: "chunk_count", label: "Số miếng", align: "right" },
-          { key: "top1_accuracy", label: "Top-1", align: "right", render: (v) => fmt.pct(v.top1_accuracy) },
-          { key: "latency_ms_median", label: "Latency đo được", align: "right", render: (v) => (v.metrics_count ? `${fmt.ms(v.latency_ms_median)} (${v.metrics_count} lần)` : h("span", { class: "muted" }, "chưa đo")) },
-          { key: "devices_complete", label: "Thiết bị có", align: "right" },
+          { key: "map50_95", label: "mAP", align: "right", render: (v) => (v.map50_95 != null ? fmt.pct(v.map50_95) : fmt.pct(v.top1_accuracy)) },
+          { key: "gflops", label: "GFLOPs", align: "right", render: (v) => (v.gflops != null ? fmt.num(v.gflops) : "—") },
+          { key: "supported_runtimes", label: "Chạy trên", sortable: false, render: runtimeBadge },
+          { key: "latency_ms_median", label: "Latency đo", align: "right", render: (v) => (v.metrics_count ? h("span", { title: `trung vị của ${v.metrics_count} lần đo` }, fmt.ms(v.latency_ms_median), h("span", { class: "small muted" }, ` ×${v.metrics_count}`)) : h("span", { class: "muted" }, "chưa đo")) },
           // nút Tắt/Bật nằm cùng cột trạng thái để bảng vừa màn 1366 px
           { key: "status", label: "Trạng thái", render: (v) => h("div", { class: "row", style: "flex-wrap:nowrap" }, statusBadge(v), statusActions(v, { readyCount, onDone: reload })) },
         ],
@@ -313,7 +328,7 @@ function listView(main, ctx) {
       }),
       new Panel(acc.body, {
         load,
-        render: chart("top1_accuracy", fmt.pct, () => "Top-1 trên ImageNet validation, sắp từ cao đến thấp."),
+        render: chart("map50_95", fmt.pct, () => "mAP@0.5:0.95 trên COCO val2017, sắp từ cao đến thấp."),
       }),
     ],
   };
@@ -350,8 +365,11 @@ function detailView(main, variantId, ctx) {
             row("Kích thước", `${fmt.mb(v.size_bytes)} (${fmt.int(v.size_bytes)} byte)`),
             row("SHA-256", h("span", { class: "mono small wrap-anywhere" }, v.sha256)),
             row("Input", h("span", { class: "mono" }, `${JSON.stringify(v.input_shape)} · ${v.output_contract}`)),
-            row("Runtime", (v.supported_runtimes || []).join(", ")),
-            row("Top-1", fmt.pct(v.top1_accuracy)),
+            row("Runtime", runtimeBadge(v)),
+            row("mAP COCO", v.map50_95 != null ? fmt.pct(v.map50_95) : "chưa có"),
+            row("GFLOPs", v.gflops != null ? fmt.num(v.gflops) : "chưa có"),
+            row("RAM tối thiểu", v.minimum_ram_mb ? `${fmt.int(v.minimum_ram_mb)} MB` : "chưa có"),
+            row("Giải mã đầu ra", v.detection_format ? h("span", { class: "mono" }, `${v.detection_format} · ${JSON.stringify(v.detection_input)}`) : "đoán theo tên variant"),
             row("Thiết bị đã có", fmt.int(v.devices_complete)),
             row(
               "Số đo thực tế",

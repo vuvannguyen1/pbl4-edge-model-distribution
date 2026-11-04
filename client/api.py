@@ -14,7 +14,8 @@ from urllib.parse import quote, urlsplit, urlunsplit
 import requests
 
 PROTOCOL_VERSION = "1.0"
-TASK = "image_classification"
+# Bài toán hiện tại của hệ thống (Registry chỉ còn model phát hiện vật thể)
+TASK = "object_detection"
 
 
 class ApiError(Exception):
@@ -58,8 +59,9 @@ def build_model_request(
     free_storage_mb: float | None,
     preferred_variant: str | None,
     have_variants: Iterable[str],
+    mode: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "device_id": device_id,
         "task": TASK,
         "bandwidth_kbps": round(bandwidth_kbps, 1) if bandwidth_kbps else None,
@@ -68,6 +70,9 @@ def build_model_request(
         "preferred_variant": preferred_variant,
         "have_variants": sorted(set(have_variants)),
     }
+    if mode is not None:  # trường tuỳ chọn: server lọc model theo tốc độ suy luận của máy
+        payload["mode"] = mode
+    return payload
 
 
 def build_have(

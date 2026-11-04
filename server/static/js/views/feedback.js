@@ -57,7 +57,7 @@ function metricsTab(root) {
   const empty = () =>
     emptyState(
       "Chưa có số đo nào.",
-      "Agent gửi số đo (thời gian tải, nạp, latency, RAM) sau mỗi lần tải và nhận diện:",
+      "Client gửi số đo (thời gian tải, nạp, latency, FPS) sau lần nhận diện đầu tiên: mở link /app trên điện thoại/laptop, hoặc chạy client Python:",
       "python -m client.agent --server http://<IP>:8000 --device-id laptopA --image samples\\dog.jpg",
     );
   const groupSort = { sortKey: "variant_id", sortDir: "asc" };
@@ -92,7 +92,8 @@ function metricsTab(root) {
                 { key: "download_ms_median", label: "Tải", align: "right", render: (g) => fmt.ms(g.download_ms_median) },
                 { key: "load_ms_median", label: "Nạp", align: "right", render: (g) => fmt.ms(g.load_ms_median) },
                 { key: "latency_ms_median", label: "Latency", align: "right", render: (g) => fmt.ms(g.latency_ms_median) },
-                { key: "peak_ram_mb_median", label: "RAM", align: "right", render: (g) => `${fmt.num(g.peak_ram_mb_median)} MB` },
+                { key: "peak_ram_mb_median", label: "RAM", align: "right", render: (g) => (g.peak_ram_mb_median == null ? "—" : `${fmt.num(g.peak_ram_mb_median)} MB`) },
+                { key: "fps_median", label: "FPS camera", align: "right", render: (g) => (g.fps_median == null ? "—" : fmt.num(g.fps_median)) },
                 { key: "chunks_from_peer", label: "Miếng peer / server", align: "right", render: (g) => `${g.chunks_from_peer} / ${g.chunks_from_server}` },
                 { key: "switch_count", label: "Lần bị đổi", align: "right" },
               ],
@@ -113,7 +114,8 @@ function metricsTab(root) {
                 { key: "variant_id", label: "Variant", render: (r) => variantLink(r.variant_id) },
                 { key: "download_ms", label: "Tải", align: "right", render: (r) => fmt.ms(r.download_ms) },
                 { key: "latency_ms_median", label: "Latency", align: "right", render: (r) => fmt.ms(r.latency_ms_median) },
-                { key: "top1_label", label: "Top-1 (độ tin)", render: (r) => (r.top1_label ? `${r.top1_label} (${fmt.pct(r.top1_confidence)})` : "—") },
+                { key: "fps", label: "FPS", align: "right", render: (r) => (r.fps == null ? "—" : fmt.num(r.fps)) },
+                { key: "top1_label", label: "Vật thể tin cậy nhất", render: (r) => (r.top1_label ? `${r.top1_label} (${fmt.pct(r.top1_confidence)})` : r.detections === 0 ? "không thấy vật thể" : "—") },
                 { key: "decision", label: "Quyết định", sortable: false, render: (r) => (r.decision?.action === "switch" ? badge("warning", `Đổi sang ${r.decision.new_variant_id}`) : badge("success", "Giữ")) },
                 { key: "data_kind", label: "Loại số liệu", render: (r) => h("span", { class: "tag" }, r.data_kind || "—") },
               ],
@@ -341,7 +343,7 @@ function textTab(root) {
     emptyState(
       "Chưa có nhận xét văn bản nào.",
       "Gửi một câu nhận xét tự do từ máy client:",
-      'python -m client.user_feedback --server http://<IP>:8000 --device-id laptopA --variant mobilenetv2_int8 --comment "nhận diện đúng, tốc độ tốt"',
+      'python -m client.user_feedback --server http://<IP>:8000 --device-id laptopA --variant yolox_nano --comment "nhận diện đúng, tốc độ tốt"',
     );
   const sort = { sortKey: null, sortDir: "asc" };
   const scoreKind = (s) => (s >= 4 ? "success" : s === 3 ? "warning" : "danger");

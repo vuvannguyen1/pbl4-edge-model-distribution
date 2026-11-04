@@ -1,38 +1,20 @@
-"""Tải 4 model ONNX đã chốt vào models/CV/ và in kích thước + SHA-256.
+"""Tải đủ model ONNX trong data/model_sources.json vào models/CV/.
 
 Chạy từ thư mục gốc repo:
     python tools/download_models.py
 
-File .onnx bị .gitignore bỏ qua, nên mỗi thành viên chạy script này
-để có đúng bộ model giống nhau thay vì gửi file qua Zalo/Drive.
+File .onnx bị .gitignore bỏ qua, nên mỗi thành viên chạy script này để có
+đúng bộ model giống nhau. Mỗi file được kiểm tra kích thước và SHA-256.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
 import urllib.request
 from pathlib import Path
-
-BASE_URL = (
-    "https://huggingface.co/onnxmodelzoo/legacy_models/resolve/main/"
-    "validated/vision/classification"
-)
-
-# Tên file lưu cục bộ (theo quy ước của nhóm) -> đường dẫn trên ONNX Model Zoo
-MODELS: dict[str, str] = {
-    "MobileNetV2_FP32.onnx": "mobilenet/model/mobilenetv2-12.onnx",
-    "MobileNetV2_INT8.onnx": "mobilenet/model/mobilenetv2-12-int8.onnx",
-    "ResNet50_FP32.onnx": "resnet/model/resnet50-v1-12.onnx",
-    "ResNet50_INT8.onnx": "resnet/model/resnet50-v1-12-int8.onnx",
-}
-
-# Hash đã biết từ JSON mẫu của nhóm (04_request_response.json)
-KNOWN_SHA256: dict[str, str] = {
-    "MobileNetV2_INT8.onnx": (
-        "cc028fe6cae7bc11a4ff53cfc9b79c920e8be65ce33a904ec3e2a8f66d77f95f"
-    ),
-}
+from typing import Any
 
 READ_SIZE = 1024 * 1024  # 1 MiB
 
@@ -47,7 +29,8 @@ def sha256_of(path: Path) -> str:
 
 def download(url: str, dest: Path) -> None:
     tmp = dest.with_suffix(dest.suffix + ".part")
-    with urllib.request.urlopen(url) as resp, tmp.open("wb") as out:
+    request = urllib.request.Request(url, headers={"User-Agent": "pbl4-edge-model-distribution/1.0"})
+    with urllib.request.urlopen(request, timeout=180) as resp, tmp.open("wb") as out:
         total = int(resp.headers.get("Content-Length", 0))
         done = 0
         while block := resp.read(READ_SIZE):
@@ -60,28 +43,48 @@ def download(url: str, dest: Path) -> None:
 
 
 def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     repo_root = Path(__file__).resolve().parent.parent
     target_dir = repo_root / "models" / "CV"
     target_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = repo_root / "data" / "model_sources.json"
+    entries: list[dict[str, Any]] = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if len(entries) != 10:
+        print(f"[LỖI] Manifest phải có đúng 10 model CV, hiện có {len(entries)}")
+        return 1
 
     ok = True
-    for name, remote in MODELS.items():
-        dest = target_dir / name
-        if dest.exists():
-            print(f"[bỏ qua] {name} đã có")
+    for entry in entries:
+        if entry.get("task_group") != "CV":
+            continue
+        name = str(entry["filename"])
+        url = str(entry["url"])
+        expected = str(entry["sha256"]).lower()
+        dest = (target_dir / name).resolve()
+        if dest.parent != target_dir.resolve():
+            print(f"[LỖI] filename không nằm trong models/CV: {name}")
+            ok = False
+            continue
+        if dest.exists() and sha256_of(dest) == expected:
+            print(f"[bỏ qua] {name} đã có và đúng SHA-256")
         else:
-            print(f"[tải] {name}")
-            download(f"{BASE_URL}/{remote}", dest)
+            print(f"[tải] {entry.get('variant_id', name)}")
+            download(url, dest)
 
         digest = sha256_of(dest)
         size_mb = dest.stat().st_size / 1024 / 1024
         print(f"  {size_mb:7.2f} MB  sha256={digest}")
 
-        expected = KNOWN_SHA256.get(name)
-        if expected and digest != expected:
-            print(f"  [LỖI] SHA-256 không khớp hash đã biết: {expected}")
+        expected_size = int(entry.get("size_bytes", 0))
+        if digest != expected:
+            print(f"  [LỖI] SHA-256 không khớp: {expected}")
+            ok = False
+        if expected_size and dest.stat().st_size != expected_size:
+            print(f"  [LỖI] kích thước không khớp: {expected_size} bytes")
             ok = False
 
+    print(f"Đã kiểm tra {len(entries)} model CV")
     return 0 if ok else 1
 
 

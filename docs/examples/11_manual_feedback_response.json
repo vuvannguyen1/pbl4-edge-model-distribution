@@ -9,6 +9,6 @@
     "variant_feedback_count": 3,
     "variant_correct_rate": 0.6667,
     "variant_avg_rating": 4.0,
-    "reason": "mobilenetv2_int8 có 3 đánh giá, đúng 67 %, trung bình 4.0 sao."
+    "reason": "yolox_nano có 3 đánh giá, đúng 67 %, trung bình 4.0 sao."
   }
 }

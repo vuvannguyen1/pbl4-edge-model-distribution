@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import mimetypes
 import os
 import sys
 from collections.abc import AsyncIterator
@@ -23,6 +24,7 @@ from fastapi.responses import JSONResponse as _BaseJSONResponse
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
+from starlette.datastructures import MutableHeaders
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from server.admin_api import MODEL_CARDS_DIR
@@ -32,11 +34,13 @@ from server.errors import ProtocolError, bad_request, error_body
 from server.ratelimit import TokenBucket
 from server.registry import Registry
 from server.schemas import (
+    AnnounceRequest,
     FeedbackRequest,
     HaveRequest,
     ManualFeedbackRequest,
     ModelRequest,
     RegisterRequest,
+    SignalMessage,
 )
 from server.selector import ModelSelector, default_selector
 from server.service import DistributionService
@@ -54,6 +58,20 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 # CSS/JS/font/icon dùng chung với giao diện client; nằm trong client/ vì client phải
 # chạy độc lập (Termux chỉ có thư mục client/)
 SHARED_UI_DIR = Path(__file__).resolve().parent.parent / "client" / "web" / "shared"
+# Giao diện client /app (điện thoại, laptop): xin model phát hiện vật thể, chạy trên camera
+# bằng onnxruntime-web, chia sẻ model P2P qua WebRTC
+WEBCLIENT_DIR = Path(__file__).resolve().parent / "webclient"
+CLIENT_PATH = "/app"
+# Trang /app được "cross-origin isolated" để onnxruntime-web dùng WASM đa luồng (SharedArrayBuffer).
+# Mọi tài nguyên của trang đều cùng origin nên require-corp không chặn gì.
+ISOLATION_HEADERS = {
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Embedder-Policy": "require-corp",
+    "Cross-Origin-Resource-Policy": "same-origin",
+}
+# Windows không phải lúc nào cũng biết .mjs/.wasm: onnxruntime-web cần đúng MIME để nạp
+mimetypes.add_type("text/javascript", ".mjs")
+mimetypes.add_type("application/wasm", ".wasm")
 # Dashboard gửi header này khi "xin model thử": server ghi request là source="web"
 SOURCE_HEADER = "X-PBL4-Source"
 WEB_SOURCE = "web-ui"
@@ -126,6 +144,30 @@ class NoCacheStaticFiles(StaticFiles):
         response = super().file_response(*args, **kwargs)
         response.headers["Cache-Control"] = "no-cache"
         return response
+
+
+class IsolationHeaders:
+    """Thêm ISOLATION_HEADERS cho response dưới `prefix`.
+
+    Middleware ASGI thuần (không dùng @app.middleware("http")): BaseHTTPMiddleware bọc kênh
+    nhận của request nên long-poll /api/signal không còn thấy trình duyệt đóng kết nối.
+    """
+
+    def __init__(self, app: Any, prefix: str) -> None:
+        self.app = app
+        self.prefix = prefix
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http" or not scope["path"].startswith(self.prefix):
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message: Any) -> None:
+            if message["type"] == "http.response.start":
+                MutableHeaders(scope=message).update(ISOLATION_HEADERS)
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
 
 
 class JSONResponse(_BaseJSONResponse):
@@ -270,6 +312,11 @@ def create_app(settings: Settings | None = None, selector: ModelSelector | None 
         f"{settings.latency_slo_ms:g}",
         settings.data_dir,
     )
+    logger.info(
+        "Giao diện client (xin model phát hiện vật thể, chạy trên camera): "
+        "http://<IP máy server>:<cổng>%s/ — chạy `python -m server.serve` để có link HTTPS",
+        CLIENT_PATH,
+    )
 
     # ------------------------------------------------------------ lỗi
 
@@ -353,6 +400,27 @@ def create_app(settings: Settings | None = None, selector: ModelSelector | None 
             return _json(service.manual_feedback(parse_model(ManualFeedbackRequest, data)))
         return _json(service.feedback(parse_model(FeedbackRequest, data)))
 
+    @app.post("/api/announce")
+    async def announce(request: Request) -> JSONResponse:
+        return _json(service.announce(parse_model(AnnounceRequest, await read_json(request))))
+
+    # ------------------------------------------------------------ signaling WebRTC
+
+    @app.post("/api/signal")
+    async def signal_post(request: Request) -> JSONResponse:
+        msg = parse_model(SignalMessage, await read_json(request))
+        if service.devices.get(msg.from_device) is None:
+            raise ProtocolError("UNKNOWN_DEVICE", f"Thiết bị '{msg.from_device}' chưa đăng ký.")
+        delivered = service.signals.post(msg.model_dump())
+        return JSONResponse({"ok": True, "delivered": delivered})
+
+    @app.get("/api/signal/{device_id}")
+    async def signal_wait(request: Request, device_id: str, wait: float = 20.0) -> JSONResponse:
+        if service.devices.get(device_id) is None:
+            raise ProtocolError("UNKNOWN_DEVICE", f"Thiết bị '{device_id}' chưa đăng ký.")
+        messages = await service.signals.wait(device_id, wait, request.is_disconnected)
+        return JSONResponse({"messages": messages})
+
     @app.post("/api/user-feedback")
     async def user_feedback_endpoint(request: Request) -> JSONResponse:
         from server.user_feedback_handler import record_user_feedback
@@ -368,6 +436,26 @@ def create_app(settings: Settings | None = None, selector: ModelSelector | None 
     # /ui/shared phải mount trước /ui (Starlette khớp theo thứ tự)
     app.mount("/ui/shared", NoCacheStaticFiles(directory=SHARED_UI_DIR), name="ui-shared")
     app.mount("/ui", NoCacheStaticFiles(directory=STATIC_DIR, html=True), name="ui")
+
+    # ------------------------------------------------------------ trang điện thoại
+
+    # Route phải khai báo trước mount /app (Starlette khớp theo thứ tự)
+    @app.get(f"{CLIENT_PATH}/links.json", include_in_schema=False)
+    async def client_links() -> JSONResponse:
+        return JSONResponse({"https_port": settings.https_port})
+
+    @app.get(CLIENT_PATH, include_in_schema=False)
+    async def client_root() -> RedirectResponse:
+        return RedirectResponse(f"{CLIENT_PATH}/")
+
+    # Link cũ /m/ (bản thử đầu tiên) vẫn dùng được
+    @app.get("/m", include_in_schema=False)
+    @app.get("/m/{rest:path}", include_in_schema=False)
+    async def legacy_mobile(rest: str = "") -> RedirectResponse:
+        return RedirectResponse(f"{CLIENT_PATH}/")
+
+    app.add_middleware(IsolationHeaders, prefix=f"{CLIENT_PATH}/")
+    app.mount(CLIENT_PATH, NoCacheStaticFiles(directory=WEBCLIENT_DIR, html=True), name="client")
 
     @app.get("/", include_in_schema=False)
     async def root() -> RedirectResponse:

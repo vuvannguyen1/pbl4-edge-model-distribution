@@ -6,7 +6,7 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
-from conftest import make_test_image, requires_models
+from conftest import REPO_ROOT, make_test_image, requires_models
 from validate_examples import schema_errors
 
 from client.agent import Agent, AgentConfig, verified_variants
@@ -16,25 +16,26 @@ from client.feedback import FeedbackQueue, load_last_detection, new_feedback_id
 
 
 @requires_models
-def test_agent_full_flow_mobilenetv2_int8(tmp_path: Path, live_server) -> None:
+def test_agent_full_flow_yolox_nano(tmp_path: Path, live_server) -> None:
     server = live_server()
-    image = make_test_image(tmp_path / "anh.jpg")
+    image = REPO_ROOT / "samples" / "dog.jpg"
     lines: list[str] = []
     config = AgentConfig(
         server=server.url,
         device_id="e2eA",
         image=image,
-        bandwidth_kbps=600,  # chỉ mobilenetv2_int8 tải kịp 60 s
+        bandwidth_kbps=600,  # chỉ yolox_nano tải kịp 60 s
         peer_port=0,
         cache_dir=tmp_path / "cache",
         runs=3,
     )
     result = Agent(config, out=lines.append).run()
 
-    assert result.variant["id"] == "mobilenetv2_int8"
+    assert result.variant["id"] == "yolox_nano"
     assert result.model_path.is_file()
     assert sha256_file(result.model_path) == result.variant["sha256"]
-    assert len(result.inference.top5) == 5
+    assert result.inference.top5[0].label == "dog"
+    assert result.inference.detections[0].label == "dog"
     assert result.download is not None
     assert result.download.chunks_from_server == result.variant["chunk_count"]
     assert schema_errors("FeedbackRequest", result.feedback_payload) == []
@@ -46,14 +47,14 @@ def test_agent_full_flow_mobilenetv2_int8(tmp_path: Path, live_server) -> None:
     assert len(files) == 1
     record = json.loads(files[0].read_text(encoding="utf-8").splitlines()[-1])
     assert record["request_id"] == result.request_id
-    assert record["variant_id"] == "mobilenetv2_int8"
+    assert record["variant_id"] == "yolox_nano"
     assert record["device_class"] == result.device_class
     assert record["top1_label"] == result.inference.top5[0].label
 
     logs = list(settings.logs_dir.glob("server-*.log"))
     assert logs and result.request_id in logs[0].read_text(encoding="utf-8")
     output = "\n".join(lines)
-    assert "Nhãn" in output and "sha256 OK" in output
+    assert "Vật thể" in output and "sha256 OK" in output
 
 
 def request_count(server) -> int:
@@ -76,16 +77,16 @@ def test_second_run_uses_local_model_without_request(tmp_path: Path, live_server
     )
     first = Agent(config, out=lambda _: None).run()
     assert first.source == "server"
-    assert "mobilenetv2_int8" in verified_variants(tmp_path / "cache")
+    assert "yolox_nano" in verified_variants(tmp_path / "cache")
     assert request_count(server) == 1
 
     lines: list[str] = []
     second = Agent(config, out=lines.append).run()
     assert second.source == "cache" and not second.offline
-    assert second.variant["id"] == "mobilenetv2_int8"
+    assert second.variant["id"] == "yolox_nano"
     assert second.model_path == first.model_path
     assert second.download is None and second.request_id == ""
-    assert len(second.inference.top5) == 5
+    assert second.inference.runs >= 1
     assert request_count(server) == 1, "có model hợp lệ thì không gửi /api/request"
     assert any("feedback_cli" in line for line in lines)
 
@@ -121,7 +122,7 @@ def test_tampered_model_is_rejected_and_downloaded_again(tmp_path: Path, live_se
     assert second.download is not None
     assert second.download.chunks_from_server >= 1
     assert sha256_file(second.model_path) == second.variant["sha256"]
-    meta = json.loads((cache / "mobilenetv2_int8" / "variant.json").read_text(encoding="utf-8"))
+    meta = json.loads((cache / "yolox_nano" / "variant.json").read_text(encoding="utf-8"))
     assert meta["status"] == "complete"
 
 
@@ -133,7 +134,7 @@ def test_agent_sends_pending_feedback_when_server_back(tmp_path: Path, live_serv
         build_manual_feedback(
             feedback_id=new_feedback_id(),
             device_id="e2eF",
-            variant_id="mobilenetv2_int8",
+            variant_id="yolox_nano",
             rating=4,
             correct=True,
             prediction="seashore",
@@ -159,7 +160,7 @@ def test_agent_sends_pending_feedback_when_server_back(tmp_path: Path, live_serv
     [stored] = queue.records()
     assert stored["feedback_id"] == record["feedback_id"] and stored["status"] == "sent"
     last = load_last_detection(cache)
-    assert last is not None and last["variant_id"] == "mobilenetv2_int8"
+    assert last is not None and last["variant_id"] == "yolox_nano"
     assert last["request_id"]
 
 
@@ -197,12 +198,13 @@ def test_follow_switch_requests_smaller_variant(tmp_path: Path, live_server) -> 
         server=server.url,
         device_id="e2eD",
         image=image,
-        bandwidth_kbps=2000,
+        bandwidth_kbps=3000,  # kịp yolox_tiny, ssd_mobilenet_v1_12_int8, yolox_nano
         peer_port=0,
         cache_dir=tmp_path / "cache",
         runs=2,
         follow_switch=True,
+        mode=None,  # không khai báo mode: ngưỡng là PBL4_LATENCY_SLO_MS như protocol 1.0
     )
     result = Agent(config, out=lambda _: None).run()
-    assert result.history == ["mobilenetv2_fp32", "mobilenetv2_int8"]
-    assert result.variant["id"] == "mobilenetv2_int8"
+    assert result.history == ["yolox_tiny", "yolox_nano"]  # bản nhỏ hơn có mAP cao nhất
+    assert result.variant["id"] == "yolox_nano"

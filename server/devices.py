@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Any
 
 _ARCH_MAP = {
     "aarch64": "arm64",
@@ -17,6 +18,9 @@ _ARCH_MAP = {
 
 RAM_LOW_MB = 4096
 RAM_HIGH_MB = 8192
+WEB_RUNTIME = "onnxruntime-web"
+NATIVE_RUNTIME = "onnxruntime"
+MOBILE_PLATFORMS = {"android", "android_browser", "ios_browser"}
 
 
 def arch_bucket(cpu_arch: str) -> str | None:
@@ -54,6 +58,33 @@ class Device:
     ip: str
     device_class: str
     registered_at: str
+    capabilities: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def runtime_family(self) -> str:
+        """`onnxruntime-web` (trình duyệt, trang /app) hoặc `onnxruntime` (client Python)."""
+        web = self.runtime.strip().lower().startswith(WEB_RUNTIME)
+        return WEB_RUNTIME if web else NATIVE_RUNTIME
+
+    @property
+    def is_mobile(self) -> bool:
+        return self.platform in MOBILE_PLATFORMS
+
+    @property
+    def threads(self) -> int:
+        return int(self.capabilities.get("threads") or 1)
+
+    @property
+    def p2p_transport(self) -> str:
+        """`http` (có peer_port), `webrtc` (trình duyệt) hoặc `none`."""
+        if self.peer_port is not None:
+            return "http"
+        return str(self.capabilities.get("p2p") or "none")
+
+    @property
+    def webrtc_origin(self) -> str | None:
+        """`webrtc://<device_id>`: nguồn miếng qua DataChannel, server làm signaling."""
+        return f"webrtc://{self.device_id}" if self.p2p_transport == "webrtc" else None
 
     @property
     def peer_origin(self) -> str | None:
@@ -83,6 +114,7 @@ class DeviceStore:
         runtime: str,
         peer_port: int | None,
         ip: str,
+        capabilities: dict[str, Any] | None = None,
     ) -> tuple[Device, bool]:
         """Đăng ký hoặc cập nhật thiết bị. Trả (thiết bị, có phải đăng ký lại không)."""
         device = Device(
@@ -95,6 +127,7 @@ class DeviceStore:
             ip=ip,
             device_class=compute_device_class(platform, cpu_arch, ram_mb),
             registered_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            capabilities=dict(capabilities or {}),
         )
         with self._lock:
             existed = device_id in self._devices

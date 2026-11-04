@@ -39,6 +39,7 @@ from server.db import (
 )
 from server.errors import ProtocolError, bad_request, unknown_device, unknown_variant
 from server.ingestion import IngestionError, ingest_model
+from server.netinfo import lan_ipv4
 from server.registry import READY, write_text_atomic
 from server.service import DistributionService
 from server.state import DownloadRequest, url_origin
@@ -143,15 +144,26 @@ def _model_card(variant_id: str) -> dict[str, Any] | None:
         return None
 
 
+def _peer_origin(service: DistributionService, device: Any) -> str | None:
+    """Nguồn peer server có thể giao cho máy khác: HTTP (client Python) hoặc WebRTC (trình duyệt
+    đang mở trang)."""
+    if device.peer_origin:
+        return device.peer_origin
+    if device.webrtc_origin and service.signals.is_online(device.device_id):
+        return device.webrtc_origin
+    return None
+
+
 def _sharing_ids(service: DistributionService) -> set[str]:
-    """Thiết bị server đang dùng làm peer: mở cổng peer, có variant đủ, chưa bị cấm."""
+    """Thiết bị server đang dùng làm peer: chia sẻ được (HTTP/WebRTC), đủ model, không bị cấm."""
     complete = {dev for dev, _ in service.state.complete_pairs()}
     banned = set(service.state.banned_origins())
-    return {
-        d.device_id
-        for d in service.devices.all()
-        if d.peer_origin and d.peer_origin not in banned and d.device_id in complete
-    }
+    result = set()
+    for d in service.devices.all():
+        origin = _peer_origin(service, d)
+        if origin and origin not in banned and d.device_id in complete:
+            result.add(d.device_id)
+    return result
 
 
 def _is_active(
@@ -163,11 +175,13 @@ def _is_active(
 
 
 def _plan_counts(record: DownloadRequest) -> dict[str, int]:
-    counts = {"server": 0, "peer": 0, "server_received": 0, "peer_received": 0}
+    counts = {"server": 0, "peer": 0, "server_received": 0, "peer_received": 0, "webrtc": 0}
     for item in record.plan:
         counts[item.source] += 1
         if item.index in record.received:
             counts[f"{item.source}_received"] += 1
+        if str(item.url).startswith("webrtc://"):
+            counts["webrtc"] += 1
     return counts
 
 
@@ -204,6 +218,10 @@ def _request_summary(service: DistributionService, record: DownloadRequest, now:
         "created_at": record.created_at,
         "updated_at": record.updated_at,
         "completed_at": record.completed_at,
+        "mode": record.mode,
+        "budget_ms": record.budget_ms,
+        "runtime_family": record.runtime_family,
+        "metrics": record.metrics,
     }
 
 
@@ -222,10 +240,11 @@ def summary(request: Request) -> dict[str, Any]:
     devices = service.devices.all()
     sharing = _sharing_ids(service)
     active = [d for d in devices if _is_active(service, d.device_id, sharing, now)]
+    browsers = [d for d in devices if d.runtime_family == "onnxruntime-web"]
 
     records = service.state.requests_snapshot()
     statuses: dict[str, int] = {}
-    planned = {"server": 0, "peer": 0, "server_received": 0, "peer_received": 0}
+    planned = {"server": 0, "peer": 0, "server_received": 0, "peer_received": 0, "webrtc": 0}
     for record in records:
         status = _request_status(record, now)
         statuses[status] = statuses.get(status, 0) + 1
@@ -248,13 +267,20 @@ def summary(request: Request) -> dict[str, Any]:
             "rate_limit_kbps": settings.rate_limit_kbps or None,
             "peer_enabled": settings.peer_enabled,
             "latency_slo_ms": settings.latency_slo_ms,
+            "https_port": settings.https_port,
+            "client_path": "/app/",
         },
         "variants": {"total": len(entries), "by_status": by_status},
         "devices": {
             "registered": len(devices),
             "active": len(active),
             "sharing_peers": len(sharing),
+            "browsers": len(browsers),
+            "python_clients": len(devices) - len(browsers),
+            "online_browsers": sum(1 for d in browsers if service.signals.is_online(d.device_id)),
         },
+        "p2p_webrtc": {"offers": service.signals.offers, "relayed": service.signals.relayed},
+        "class_speeds": service.state.class_speeds(),
         "requests": {"total": len(records), "by_status": statuses},
         "chunks_planned": planned,
         "chunks_actual": actual,
@@ -332,10 +358,16 @@ def devices(request: Request) -> dict[str, Any]:
         own = [r for r in records if r.device_id == device.device_id]
         last_seen = service.devices.last_seen(device.device_id)
         complete = sorted(v for d, v in complete_pairs if d == device.device_id)
+        speed, speed_source = service.device_speed(device)
         items.append(
             {
                 **asdict(device),
-                "peer_origin": device.peer_origin,
+                "runtime_family": device.runtime_family,
+                "p2p_transport": device.p2p_transport,
+                "online": service.signals.is_online(device.device_id),
+                "ms_per_gflop": round(speed, 1),
+                "speed_source": speed_source,
+                "peer_origin": _peer_origin(service, device) or device.peer_origin,
                 "last_seen": last_seen,
                 "last_seen_age_s": _age_s(last_seen, now),
                 "complete_variants": complete,
@@ -348,6 +380,39 @@ def devices(request: Request) -> dict[str, Any]:
             }
         )
     return {"now": now.isoformat(timespec="seconds"), "devices": items}
+
+
+@router.get("/links")
+def links(request: Request) -> dict[str, Any]:
+    """Link cho client mở trên điện thoại/laptop (dashboard vẽ mã QR từ đây)."""
+    settings = _settings(request)
+    http_port = settings.http_port or (
+        request.url.port if request.url.scheme == "http" else None
+    ) or 8000
+    hosts = lan_ipv4() or [request.url.hostname or "127.0.0.1"]
+    items = []
+    for host in hosts:
+        if settings.https_port:
+            items.append(
+                {
+                    "host": host,
+                    "url": f"https://{host}:{settings.https_port}/app/",
+                    "kind": "https",
+                    "note": "Camera trực tiếp. Lần đầu: Nâng cao → Tiếp tục (chứng chỉ tự ký).",
+                }
+            )
+        items.append(
+            {
+                "host": host,
+                "url": f"http://{host}:{http_port}/app/",
+                "kind": "http",
+                "note": "Không cần chứng chỉ; trình duyệt chỉ cho chụp từng ảnh."
+                if settings.https_port
+                else "Chụp từng ảnh. Muốn camera trực tiếp: bật server bằng "
+                "python -m server.serve.",
+            }
+        )
+    return {"links": items, "https_port": settings.https_port, "http_port": http_port}
 
 
 @router.post("/devices/{device_id}/heartbeat")
@@ -381,6 +446,11 @@ def _variant_row(service: DistributionService, entry: dict[str, Any], metrics: l
         "chunk_count": entry.get("chunk_count"),
         "sha256": entry.get("sha256"),
         "top1_accuracy": entry.get("top1_accuracy"),
+        "map50_95": entry.get("map50_95"),
+        "gflops": entry.get("gflops"),
+        "minimum_ram_mb": entry.get("minimum_ram_mb"),
+        "detection_format": (entry.get("detection") or {}).get("format"),
+        "detection_input": (entry.get("detection") or {}).get("input_size"),
         "input_shape": entry.get("input_shape"),
         "supported_runtimes": entry.get("supported_runtimes"),
         "status": entry.get("status"),
@@ -730,6 +800,7 @@ def _metrics_by_variant(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "load_ms_median": _median(i.get("load_ms") for i in items),
                 "latency_ms_median": _median(i.get("latency_ms_median") for i in items),
                 "peak_ram_mb_median": _median(i.get("peak_ram_mb") for i in items),
+                "fps_median": _median(i.get("fps") for i in items),
                 "chunks_from_peer": sum(int(i.get("chunks_from_peer") or 0) for i in items),
                 "chunks_from_server": sum(int(i.get("chunks_from_server") or 0) for i in items),
                 "switch_count": sum(

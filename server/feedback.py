@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from server.registry import RegistryVariant
-from server.selector import fmt_num
+from server.selector import download_seconds, fmt_num, quality_text
 
 BYTES_PER_MB = 1024 * 1024
 
@@ -37,12 +37,43 @@ def decide(
     current: RegistryVariant | None,
     ready_variants: Sequence[RegistryVariant],
     latency_slo_ms: float,
+    runtime_family: str | None = None,
+    upgrade_budget_ms: float | None = None,
+    bandwidth_kbps: float | None = None,
+    deadline_s: float | None = None,
 ) -> FeedbackDecision:
-    """Mặc định keep. Nếu latency vượt ngưỡng và có variant ready nhỏ hơn cùng task,
-    chuyển sang variant nhỏ hơn có top-1 cao nhất (bằng nhau thì file nhỏ hơn)."""
+    """Mặc định keep.
+
+    - Latency vượt ngưỡng và có variant ready nhỏ hơn cùng task (thiết bị chạy được): chuyển
+      sang bản nhỏ hơn có chất lượng cao nhất (top-1 hoặc mAP; bằng nhau thì file nhỏ hơn).
+    - Có `upgrade_budget_ms` (lượt xin có mode) và máy chạy dư sức: nếu một bản chất lượng cao
+      hơn, ước lượng theo tỉ lệ GFLOPs, vẫn chạy trong 80 % ngân sách và tải kịp hạn ở băng thông
+      của lượt đó thì đề xuất nâng cấp.
+    """
     latency = fmt_num(latency_ms_median, 2)
     slo = fmt_num(latency_slo_ms)
+    compatible = [
+        v for v in ready_variants if runtime_family is None or v.supports_runtime(runtime_family)
+    ]
     if latency_ms_median <= latency_slo_ms:
+        downloadable = [
+            v
+            for v in compatible
+            if not (bandwidth_kbps and deadline_s)
+            or download_seconds(v.size_bytes, bandwidth_kbps) <= deadline_s
+        ]
+        upgrade = _upgrade(current, downloadable, latency_ms_median, upgrade_budget_ms)
+        if upgrade is not None and current is not None:
+            target, estimate = upgrade
+            return FeedbackDecision(
+                "switch",
+                target.variant_id,
+                device_class,
+                f"Thời gian suy luận {latency} ms, còn dư so với ngân sách "
+                f"{fmt_num(upgrade_budget_ms or 0)} ms; nâng lớp {device_class} từ {variant_id} "
+                f"({quality_text(current)}) lên {target.variant_id} ({quality_text(target)}, "
+                f"ước tính {fmt_num(estimate)} ms theo tỉ lệ GFLOPs).",
+            )
         return FeedbackDecision(
             "keep",
             None,
@@ -62,7 +93,7 @@ def decide(
 
     smaller = [
         v
-        for v in ready_variants
+        for v in compatible
         if v.task_id == current.task_id
         and v.variant_id != current.variant_id
         and v.size_bytes < current.size_bytes
@@ -76,7 +107,7 @@ def decide(
             f"nhỏ hơn {variant_id} cùng task; giữ {variant_id}.",
         )
 
-    target = sorted(smaller, key=lambda v: (-v.top1_accuracy, v.size_bytes, v.variant_id))[0]
+    target = sorted(smaller, key=lambda v: (-v.quality, v.size_bytes, v.variant_id))[0]
     return FeedbackDecision(
         "switch",
         target.variant_id,
@@ -84,8 +115,31 @@ def decide(
         f"Thời gian suy luận {latency} ms vượt ngưỡng {slo} ms; chuyển lớp {device_class} "
         f"từ {variant_id} ({fmt_num(current.size_bytes / BYTES_PER_MB)} MB) sang "
         f"{target.variant_id} ({fmt_num(target.size_bytes / BYTES_PER_MB)} MB, "
-        f"top-1 {target.top1_accuracy:.4f}), bản nhỏ hơn có top-1 cao nhất.",
+        f"{quality_text(target)}), bản nhỏ hơn có {target.quality_label} cao nhất.",
     )
+
+
+UPGRADE_HEADROOM = 0.8
+
+
+def _upgrade(
+    current: RegistryVariant | None,
+    compatible: Sequence[RegistryVariant],
+    latency_ms: float,
+    budget_ms: float | None,
+) -> tuple[RegistryVariant, float] | None:
+    if budget_ms is None or current is None or not current.gflops:
+        return None
+    options = []
+    for v in compatible:
+        if v.task_id != current.task_id or v.quality <= current.quality or not v.gflops:
+            continue
+        estimate = latency_ms * v.gflops / current.gflops
+        if estimate <= budget_ms * UPGRADE_HEADROOM:
+            options.append((v, estimate))
+    if not options:
+        return None
+    return max(options, key=lambda o: (o[0].quality, -o[0].size_bytes))
 
 
 class FeedbackStore:

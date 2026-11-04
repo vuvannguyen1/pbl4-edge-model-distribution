@@ -1,0 +1,334 @@
+/* Giao diện client /app: một cột, nút cỡ chạm, 3 tab (Model, Camera, Đánh giá).
+   Chỉ dùng token trong /ui/shared/css/tokens.css. */
+
+.m-top {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-header);
+  background: var(--color-card);
+  border-bottom: 1px solid var(--color-border);
+  box-shadow: var(--shadow-sm);
+}
+
+.m-top-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md) var(--space-xl);
+  max-width: var(--content-max-client);
+  margin: 0 auto;
+  padding: var(--space-lg) var(--space-xl) var(--space-md);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-md);
+  color: var(--color-heading);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+}
+
+.m-tabs {
+  display: flex;
+  max-width: var(--content-max-client);
+  margin: 0 auto;
+  padding: 0 var(--space-md);
+}
+
+.m-tab {
+  display: inline-flex;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  min-height: var(--control-height-touch);
+  border-bottom: 3px solid transparent;
+  color: var(--color-muted-text);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+}
+
+.m-tab:hover {
+  color: var(--color-primary);
+}
+
+.m-tab[aria-current="page"] {
+  border-bottom-color: var(--color-primary);
+  color: var(--color-primary);
+  font-weight: var(--weight-semibold);
+}
+
+.m-tab:focus-visible {
+  outline: 3px solid var(--color-ring);
+  outline-offset: -3px;
+}
+
+.m-main {
+  max-width: var(--content-max-client);
+  margin: 0 auto;
+  padding: var(--space-xl);
+}
+
+.m-main:focus,
+.m-main:focus-visible {
+  outline: none;
+}
+
+.m-main h1 {
+  font-size: var(--text-xl);
+}
+
+.btn,
+.input,
+.choice span {
+  min-height: var(--control-height-touch);
+}
+
+.btn-lg {
+  padding: 0 var(--space-3xl);
+  font-size: var(--text-lg);
+}
+
+a.btn {
+  text-decoration: none;
+}
+
+.section-gap {
+  margin-top: var(--space-lg);
+}
+
+.reason {
+  padding: var(--space-lg);
+  border-radius: var(--radius-md);
+  background: var(--color-muted);
+}
+
+.notes {
+  display: grid;
+  gap: var(--space-xs);
+  margin: 0;
+  padding-left: var(--space-xl);
+  color: var(--color-warning);
+}
+
+.notes:empty {
+  display: none;
+}
+
+/* ---- Các bước xin model */
+
+.steps {
+  display: grid;
+  gap: var(--space-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.steps li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm) var(--space-md);
+}
+
+.steps li.is-current {
+  font-weight: var(--weight-semibold);
+  color: var(--color-info);
+}
+
+.steps li.is-done .icon {
+  color: var(--color-success);
+}
+
+.steps li.is-skip,
+.steps li.is-pending {
+  color: var(--color-muted-text);
+}
+
+.steps li.is-error {
+  color: var(--color-danger);
+}
+
+.model-list {
+  display: grid;
+  gap: var(--space-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.model-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm) var(--space-lg);
+  padding: var(--space-sm) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.model-list li:last-child {
+  border-bottom: 0;
+}
+
+/* ---- Camera */
+
+.stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 220px;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  background: var(--color-text);
+}
+
+.stage video,
+.stage canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  grid-area: 1 / 1;
+}
+
+.stage:not(.is-live) video {
+  display: none;
+}
+
+.stage.is-live canvas {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+}
+
+.stage.is-empty canvas {
+  display: none;
+}
+
+.stage-empty {
+  grid-area: 1 / 1;
+  max-width: 28ch;
+  padding: var(--space-xl);
+  color: var(--color-on-primary);
+  text-align: center;
+}
+
+.stage:not(.is-empty) .stage-empty {
+  display: none;
+}
+
+.stage-stats {
+  position: absolute;
+  bottom: var(--space-md);
+  left: var(--space-md);
+  margin: 0;
+  padding: var(--space-xs) var(--space-md);
+  border-radius: var(--radius-sm);
+  background: var(--color-overlay);
+  color: var(--color-on-primary);
+  font-size: var(--text-xs);
+}
+
+.stage-stats:empty {
+  display: none;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+}
+
+.toolbar .btn {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+.toolbar .btn[hidden] {
+  display: none;
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: var(--space-lg) var(--space-xl);
+  align-items: end;
+}
+
+#threshold {
+  width: 100%;
+  min-height: var(--control-height-touch);
+  accent-color: var(--color-primary);
+}
+
+.det-list {
+  display: grid;
+  gap: var(--space-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.det-list li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.det-list .num {
+  margin-left: auto;
+  font-weight: var(--weight-semibold);
+}
+
+.det-list .swatch {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-sm);
+}
+
+/* Điện thoại: "Chụp ảnh" mở thẳng camera của máy; trên máy tính chỉ "Chọn ảnh" */
+.touch-only {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  label.touch-only {
+    display: inline-flex;
+  }
+}
+
+/* ---- Đánh giá */
+
+.snapshot {
+  display: grid;
+  gap: var(--space-md);
+  margin: 0;
+}
+
+.snapshot canvas {
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-md);
+  background: var(--color-text);
+}
+
+@media (max-width: 767px) {
+  .m-main {
+    padding: var(--space-lg) var(--space-md);
+  }
+
+  .m-top-inner {
+    padding: var(--space-md);
+  }
+
+  .btn-lg {
+    width: 100%;
+  }
+
+  .controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

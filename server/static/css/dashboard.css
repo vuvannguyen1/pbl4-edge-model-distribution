@@ -256,3 +256,67 @@ main:focus-visible {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---- Link + mã QR cho client (Tổng quan) */
+
+.link-panel {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: var(--space-2xl);
+  align-items: start;
+}
+
+.qr-box {
+  display: grid;
+  gap: var(--space-sm);
+  justify-items: center;
+  margin: 0;
+}
+
+.qr {
+  display: block;
+  width: 200px;
+  height: 200px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: #ffffff;
+}
+
+.link-main {
+  margin: 0;
+  color: var(--color-heading);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+}
+
+.link-list,
+.plain-list {
+  display: grid;
+  gap: var(--space-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.link-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm) var(--space-md);
+}
+
+.link-list li > span {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+@media (max-width: 767px) {
+  .link-panel {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: start;
+  }
+
+  .link-main {
+    font-size: var(--text-lg);
+  }
+}

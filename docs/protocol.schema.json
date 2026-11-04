@@ -18,11 +18,22 @@
       "properties": {
         "protocol_version": {"const": "1.0"},
         "device_id": {"$ref": "#/$defs/DeviceId"},
-        "platform": {"enum": ["android", "android_browser", "ios_browser", "windows", "linux"]},
+        "platform": {"enum": ["android", "android_browser", "ios_browser", "web_desktop", "windows", "linux"]},
         "cpu_arch": {"type": "string", "minLength": 1},
         "ram_mb": {"type": "integer", "minimum": 1},
         "runtime": {"type": "string", "minLength": 1},
-        "peer_port": {"type": ["integer", "null"], "minimum": 1024, "maximum": 65535}
+        "peer_port": {"type": ["integer", "null"], "minimum": 1024, "maximum": 65535},
+        "capabilities": {
+          "description": "Tuỳ chọn. Năng lực thiết bị để Selector ước lượng tốc độ suy luận.",
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "threads": {"type": "integer", "minimum": 1, "maximum": 64},
+            "webgpu": {"type": "boolean"},
+            "camera": {"type": "boolean"},
+            "p2p": {"enum": ["webrtc", "http", "none"]}
+          }
+        }
       }
     },
     "RegisterResponse": {
@@ -44,12 +55,14 @@
       "required": ["device_id", "task", "bandwidth_kbps", "deadline_s", "free_storage_mb", "preferred_variant", "have_variants"],
       "properties": {
         "device_id": {"$ref": "#/$defs/DeviceId"},
-        "task": {"const": "image_classification"},
+        "task": {"enum": ["image_classification", "object_detection"]},
         "bandwidth_kbps": {"type": ["number", "null"], "exclusiveMinimum": 0},
         "deadline_s": {"type": "number", "exclusiveMinimum": 0},
         "free_storage_mb": {"$ref": "#/$defs/NullableNonNeg"},
         "preferred_variant": {"anyOf": [{"$ref": "#/$defs/VariantId"}, {"type": "null"}]},
-        "have_variants": {"type": "array", "items": {"$ref": "#/$defs/VariantId"}, "uniqueItems": true}
+        "have_variants": {"type": "array", "items": {"$ref": "#/$defs/VariantId"}, "uniqueItems": true},
+        "mode": {"description": "Tuỳ chọn. live: camera liên tục; photo: ảnh chụp.", "enum": ["live", "photo", null]},
+        "target_fps": {"type": ["number", "null"], "exclusiveMinimum": 0, "maximum": 120}
       }
     },
     "Variant": {
@@ -77,7 +90,12 @@
             "mean": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
             "std": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 3, "maxItems": 3}
           }
-        }
+        },
+        "task": {"type": ["string", "null"]},
+        "map50_95": {"$ref": "#/$defs/NullableRatio"},
+        "gflops": {"$ref": "#/$defs/NullableNonNeg"},
+        "runtimes": {"type": ["array", "null"], "items": {"type": "string"}},
+        "detection": {"description": "contract.detection của Model Card: cách tiền xử lý và giải mã đầu ra.", "type": ["object", "null"]}
       }
     },
     "PlanItem": {
@@ -90,7 +108,7 @@
         "size_bytes": {"type": "integer", "minimum": 1, "maximum": 1048576},
         "sha256": {"$ref": "#/$defs/Sha256"},
         "source": {"enum": ["server", "peer"]},
-        "url": {"type": "string", "pattern": "^http://"},
+        "url": {"type": "string", "pattern": "^(http|webrtc)://"},
         "fallback_url": {"type": ["string", "null"], "pattern": "^http://"}
       },
       "if": {"properties": {"source": {"const": "peer"}}},
@@ -129,7 +147,7 @@
             "required": ["index", "source_url"],
             "properties": {
               "index": {"type": "integer", "minimum": 0},
-              "source_url": {"type": "string", "pattern": "^http://"}
+              "source_url": {"type": "string", "pattern": "^(http|webrtc)://"}
             }
           }
         }
@@ -166,7 +184,9 @@
         "runs": {"type": "integer", "minimum": 1},
         "peak_ram_mb": {"$ref": "#/$defs/NullableNonNeg"},
         "top1_label": {"type": ["string", "null"]},
-        "top1_confidence": {"$ref": "#/$defs/NullableRatio"}
+        "top1_confidence": {"$ref": "#/$defs/NullableRatio"},
+        "fps": {"$ref": "#/$defs/NullableNonNeg"},
+        "detections": {"type": ["integer", "null"], "minimum": 0}
       }
     },
     "FeedbackResponse": {
@@ -227,6 +247,46 @@
       }
     },
 
+    "AnnounceRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["device_id", "variants"],
+      "properties": {
+        "device_id": {"$ref": "#/$defs/DeviceId"},
+        "variants": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["variant_id", "sha256"],
+            "properties": {"variant_id": {"$ref": "#/$defs/VariantId"}, "sha256": {"$ref": "#/$defs/Sha256"}}
+          }
+        }
+      }
+    },
+    "AnnounceResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "accepted", "rejected"],
+      "properties": {
+        "ok": {"const": true},
+        "accepted": {"type": "array", "items": {"$ref": "#/$defs/VariantId"}},
+        "rejected": {"type": "array", "items": {"$ref": "#/$defs/VariantId"}}
+      }
+    },
+    "SignalMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from_device", "to_device", "type", "session"],
+      "properties": {
+        "from_device": {"$ref": "#/$defs/DeviceId"},
+        "to_device": {"$ref": "#/$defs/DeviceId"},
+        "type": {"enum": ["offer", "answer", "candidate", "bye"]},
+        "session": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$"},
+        "data": {"type": ["object", "null"]}
+      }
+    },
     "Error": {
       "type": "object",
       "additionalProperties": false,

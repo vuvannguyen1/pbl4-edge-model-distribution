@@ -84,8 +84,8 @@ def sync_registry_to_db(
                 model_id=model_id,
                 version=str(v.get("version", "1.0")),
                 precision=v.get("precision", "fp32"),
-                compression_level=int(v.get("level", 0)),
-                top1_accuracy=float(v.get("top1_accuracy", 0.0)),
+                compression_level=int(v.get("level") or 0),
+                top1_accuracy=float(v.get("top1_accuracy") or 0.0),
                 status=v.get("status", "ready"),
                 model_card_json=card_json,
             )
@@ -94,8 +94,8 @@ def sync_registry_to_db(
             variant_rec.model_id = model_id
             variant_rec.version = str(v.get("version", "1.0"))
             variant_rec.precision = v.get("precision", "fp32")
-            variant_rec.compression_level = int(v.get("level", 0))
-            variant_rec.top1_accuracy = float(v.get("top1_accuracy", 0.0))
+            variant_rec.compression_level = int(v.get("level") or 0)
+            variant_rec.top1_accuracy = float(v.get("top1_accuracy") or 0.0)
             variant_rec.status = v.get("status", "ready")
             if card_json:
                 variant_rec.model_card_json = card_json

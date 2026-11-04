@@ -3,6 +3,13 @@ import { Panel, api, badge, emptyState, fmt, h, sortableTable } from "../../shar
 import { card, deviceActivity, pageHead, requestLink, variantLink } from "./common.js";
 
 function peerCell(d) {
+  if (d.p2p_transport === "webrtc") {
+    const line = h("span", { class: "small muted" }, "WebRTC · trình duyệt");
+    if (d.peer_banned) return h("div", { class: "stack", style: "gap:4px" }, badge("danger", "Bị cấm (gửi sai)"), line);
+    if (!d.online) return h("div", { class: "stack", style: "gap:4px" }, badge("neutral", "Đã đóng trang", "wifi-slash"), line);
+    if (d.sharing) return h("div", { class: "stack", style: "gap:4px" }, badge("success", "Đang chia sẻ", "share-network"), line);
+    return h("div", { class: "stack", style: "gap:4px" }, badge("info", "Online, chưa có model", "wifi-high"), line);
+  }
   if (!d.peer_origin) return badge("neutral", "Không mở cổng peer");
   if (d.peer_banned) return h("div", { class: "stack", style: "gap:4px" }, badge("danger", "Bị cấm (gửi sai)"), h("span", { class: "mono small" }, d.peer_origin));
   if (d.sharing) return h("div", { class: "stack", style: "gap:4px" }, badge("success", "Đang chia sẻ", "share-network"), h("span", { class: "mono small" }, d.peer_origin));
@@ -19,7 +26,7 @@ export default {
     main.append(
       pageHead(
         "Thiết bị & P2P",
-        "Hai thiết bị cùng lớp (cùng hệ điều hành, loại CPU, nhóm RAM) mới chia sẻ model cho nhau qua P2P.",
+        "Hai thiết bị cùng lớp (cùng nền tảng, loại CPU, nhóm RAM) mới chia sẻ model cho nhau: trình duyệt qua WebRTC khi đang mở trang /app, client Python qua cổng HTTP.",
       ),
       list.el,
     );
@@ -30,7 +37,7 @@ export default {
         if (!data.devices.length) {
           return emptyState(
             "Chưa có thiết bị nào đăng ký.",
-            "Thiết bị xuất hiện ở đây sau khi gọi POST /api/register, ví dụ khi chạy client agent:",
+            "Thiết bị xuất hiện ở đây khi mở link /app (xem Tổng quan) trên điện thoại/laptop, hoặc khi chạy client Python:",
             "python -m client.agent --server http://<IP>:8000 --device-id laptopA --peer-port 9000 --serve",
           );
         }
@@ -50,7 +57,8 @@ export default {
                   "div",
                   { class: "stack", style: "gap:2px" },
                   h("span", {}, `${d.platform} · ${d.cpu_arch} · RAM ${fmt.num(d.ram_mb / 1024)} GB`),
-                  h("span", { class: "small muted" }, d.runtime),
+                  h("span", { class: "small muted" }, `${d.runtime}${d.capabilities?.threads ? ` · ${d.capabilities.threads} luồng` : ""}`),
+                  h("span", { class: "small muted" }, `Suy luận ${d.speed_source} ${fmt.num(d.ms_per_gflop)} ms/GFLOP`),
                 ),
             },
             { key: "peer", label: "P2P", sortable: false, render: peerCell },

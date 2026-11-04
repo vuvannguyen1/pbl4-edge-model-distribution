@@ -137,7 +137,7 @@ def ingest_model(
     """
     variant_id = str(metadata.get("variant_id", "")).strip()
     model_id = str(metadata.get("model_id", "")).strip()
-    task_id = str(metadata.get("task_id", "image_classification")).strip()
+    task_id = str(metadata.get("task_id", "object_detection")).strip()
     family = str(metadata.get("family", model_id)).strip()
     task_group = str(metadata.get("task_group", "CV")).strip()
     precision = str(metadata.get("precision", "fp32")).strip()
@@ -209,6 +209,7 @@ def ingest_model(
                 "level": level,
                 "top1_accuracy": top1_accuracy,
                 "version": version,
+                "task_group": task_group,
             },
             settings=settings,
             session=session,
@@ -234,6 +235,12 @@ def _record_model(
     variant_id, model_id, task_id = fields["variant_id"], fields["model_id"], fields["task_id"]
     family, precision, level = fields["family"], fields["precision"], fields["level"]
     top1_accuracy, version = fields["top1_accuracy"], fields["version"]
+    task_group = fields["task_group"]
+    source_provider = metadata.get("source_provider")
+    source_model_id = metadata.get("source_model_id")
+    source_revision = metadata.get("source_revision")
+    source_format = metadata.get("source_format")
+    distribution_format = metadata.get("distribution_format", "onnx")
 
     # Tính toán băm
     whole_sha256, chunks = hash_content_chunks(model_bytes)
@@ -362,6 +369,13 @@ def _record_model(
             "source_format": source_format,
             "distribution_format": distribution_format,
             "top1_accuracy": top1_accuracy,
+            # Phát hiện vật thể: chất lượng, chi phí tính toán, runtime và cách giải mã đầu ra.
+            # Thiếu `detection` thì client đoán theo tiền tố variant_id (yolox_, ssd_mobilenet...).
+            "map50_95": metadata.get("map50_95"),
+            "gflops": metadata.get("gflops"),
+            "supported_runtimes": metadata.get("supported_runtimes"),
+            "minimum_ram_mb": metadata.get("minimum_ram_mb"),
+            "detection": metadata.get("detection"),
             "input_shape": metadata.get("input_shape", [1, 3, 224, 224]),
             "input_dtype": metadata.get("input_dtype", "float"),
             "normalize": metadata.get(

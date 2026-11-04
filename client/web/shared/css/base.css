@@ -383,6 +383,11 @@ table.data th.right {
   text-align: right;
 }
 
+/* số và đơn vị ("25,8 %", "3,5 MB") không tách dòng */
+table.data td.right {
+  white-space: nowrap;
+}
+
 table.data tbody tr:hover {
   background: var(--color-background);
 }

@@ -223,7 +223,10 @@ models/**/*.onnx
 
 # PBL4: du lieu sinh luc chay (log, feedback, cache client) va file tai do dang
 data/
-data_demo/
+# Manifest nguồn model là cấu hình phân phối, cần commit để máy mới tải đủ model.
+!data/
+data/*
+!data/model_sources.json
 *.part
 *.onnx
 

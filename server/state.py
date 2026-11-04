@@ -7,7 +7,9 @@ Mọi thao tác đều khóa bằng threading.Lock vì handler có thể chạy 
 from __future__ import annotations
 
 import itertools
+import statistics
 import threading
+from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -49,6 +51,15 @@ class DownloadRequest:
     completed_at: str | None = None
     server_bandwidth_kbps: float | None = None  # client đo được khi tải từ server (/api/have)
     bad_chunks: set[int] = field(default_factory=set)
+    mode: str | None = None  # "live" | "photo" | None
+    budget_ms: float | None = None  # ngân sách suy luận Selector đã dùng
+    runtime_family: str | None = None
+    # số đo client gửi qua /api/feedback (dashboard: FPS, miếng nhận từ peer)
+    metrics: dict | None = None
+
+
+# Số lần đo gần nhất giữ lại để tính tốc độ một lớp thiết bị (ms cho mỗi GFLOP)
+SPEED_SAMPLES = 20
 
 
 class StateStore:
@@ -62,6 +73,8 @@ class StateStore:
         self._bad_origins: set[str] = set()
         # device_class -> variant được ghi nhớ từ feedback
         self._class_variant: dict[str, str] = {}
+        # device_class -> các lần đo ms/GFLOP gần nhất (từ /api/feedback)
+        self._class_speed: dict[str, deque[float]] = {}
 
     # ------------------------------------------------------------ request
 
@@ -86,6 +99,9 @@ class StateStore:
         deadline_s: float | None = None,
         estimated_download_s: float | None = None,
         decision_log: Iterable[str] = (),
+        mode: str | None = None,
+        budget_ms: float | None = None,
+        runtime_family: str | None = None,
     ) -> DownloadRequest:
         """Tạo request mới. `complete=True` khi thiết bị đã có đủ variant (plan rỗng)."""
         with self._lock:
@@ -110,6 +126,9 @@ class StateStore:
                 decision_log=list(decision_log),
                 updated_at=now,
                 completed_at=now if complete else None,
+                mode=mode,
+                budget_ms=budget_ms,
+                runtime_family=runtime_family,
             )
             self._requests[request_id] = record
             return record
@@ -147,6 +166,17 @@ class StateStore:
             record.completed_at = record.completed_at or utc_now()
             self._complete.add((record.device_id, record.variant_id))
             return True
+
+    def declare_complete(self, device_id: str, variant_id: str) -> None:
+        """Thiết bị khai báo đã có đủ variant (/api/announce, SHA-256 đã khớp Registry)."""
+        with self._lock:
+            self._complete.add((device_id, variant_id))
+
+    def set_metrics(self, request_id: str, metrics: dict) -> None:
+        with self._lock:
+            record = self._requests.get(request_id)
+            if record is not None:
+                record.metrics = dict(metrics)
 
     # ------------------------------------------------------------ snapshot cho dashboard
 
@@ -221,3 +251,22 @@ class StateStore:
     def class_variant(self, device_class: str) -> str | None:
         with self._lock:
             return self._class_variant.get(device_class)
+
+    def record_speed(self, device_class: str, ms_per_gflop: float) -> None:
+        with self._lock:
+            samples = self._class_speed.setdefault(device_class, deque(maxlen=SPEED_SAMPLES))
+            samples.append(ms_per_gflop)
+
+    def class_speed(self, device_class: str) -> float | None:
+        """Trung vị ms/GFLOP đo được của lớp thiết bị; None nếu chưa có số đo."""
+        with self._lock:
+            samples = self._class_speed.get(device_class)
+            return statistics.median(samples) if samples else None
+
+    def class_speeds(self) -> dict[str, dict[str, float]]:
+        with self._lock:
+            return {
+                cls: {"ms_per_gflop": statistics.median(v), "samples": len(v)}
+                for cls, v in self._class_speed.items()
+                if v
+            }

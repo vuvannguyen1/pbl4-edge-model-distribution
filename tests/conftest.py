@@ -86,7 +86,7 @@ def fake_entry(variant_id: str, data: bytes, top1: float, storage_path: str) -> 
         "variant_id": variant_id,
         "model_id": variant_id.split("_")[0],
         "version": "1",
-        "task_id": "image_classification",
+        "task_id": "object_detection",
         "file": Path(storage_path).name,
         "storage_path": storage_path,
         "base_model": variant_id.split("_")[0],

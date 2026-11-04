@@ -1,6 +1,12 @@
 # Hướng dẫn chạy demo Version 1 (Windows `cmd`)
 
 Tài liệu này hướng dẫn từng bước chạy server, client, P2P và fallback trên Windows.
+
+> **Bài toán hiện tại: phát hiện vật thể (10 model CV).** Cách demo chính là giao diện trình
+> duyệt: chạy `python -m server.serve`, mở link `https://<IP>:8443/app/` trên điện thoại (hoặc quét
+> QR ở dashboard), xem README mục *Bắt đầu nhanh*. Demo P2P giữa hai điện thoại: mở link trên máy
+> A, xin model và để trang mở; máy B cùng loại xin model sẽ nhận một nửa số miếng từ A (ô **P**
+> trên lưới miếng, dashboard → Truyền model). Các mục dưới đây là client Python (CLI).
 Mọi lệnh chạy từ **thư mục gốc repo** (`pbl4-edge-model-distribution`). Trên Linux,
 thay `\` bằng `/` và `set X=Y` bằng `export X=Y`.
 
@@ -19,11 +25,11 @@ Tải model, sinh Registry, tải nhãn ImageNet và ảnh demo:
 
 ```cmd
 python tools\download_models.py
-python tools\build_registry.py
 python tools\download_assets.py
 ```
 
-- `build_registry.py` phải in `4 variant, 4 ready`. Nếu chỉ có `generated_at` thay đổi
+- `download_models.py` phải kiểm tra đủ 10 model CV. Registry 10 variant đã được commit;
+  không cần chạy lại `build_registry.py`. Nếu chỉ có `generated_at` thay đổi
   trong `registry/model_registry.json` thì không cần commit file này.
 - `download_assets.py` tạo `samples\imagenet_synset.txt` (1000 nhãn) và `samples\cat.jpg`,
   `samples\dog.jpg`. Nếu không tải được ảnh, tự chép một ảnh `.jpg` vào `samples\`.
@@ -42,14 +48,15 @@ python -m pytest -q
 Terminal 1:
 
 ```cmd
-uvicorn server.main:app --host 0.0.0.0 --port 8000
+python -m server.serve
 ```
 
-Dòng log khởi động xác nhận server sẵn sàng, ví dụ:
+(hoặc `uvicorn server.main:app --host 0.0.0.0 --port 8000`, chỉ HTTP, không in link.) Dòng log
+khởi động xác nhận server sẵn sàng, ví dụ:
 
 ```
-INFO    Đã nạp Registry: 4 variant, 4 ready (mobilenetv2_fp32, mobilenetv2_int8, resnet50_fp32, resnet50_int8)
-INFO    Server sẵn sàng: protocol 1.0, 4 variant ready (...), selector rule-v1, giới hạn tốc độ không giới hạn, peer bật, SLO latency 500 ms, ...
+INFO    Đã nạp Registry: 10 variant, 10 ready (fasterrcnn_r50_12_int8, retinanet_resnet101, ssd_mobilenet_v1_12, ...)
+INFO    Server sẵn sàng: protocol 1.0, 10 variant ready (...), selector rule-v1, giới hạn tốc độ không giới hạn, peer bật, SLO latency 500 ms, ...
 ```
 
 Biến môi trường (đặt bằng `set` trước khi chạy `uvicorn`):
@@ -76,29 +83,34 @@ Muốn bỏ giới hạn: `set PBL4_RATE_LIMIT_KBPS=` (hoặc mở terminal mớ
 ## 3. Chạy client theo từng mức băng thông
 
 Terminal 2. `--bandwidth` (kbps) giả lập băng thông đo được, nên server chọn variant khác nhau;
-hạn tải mặc định 60 s:
+hạn tải mặc định 60 s. `--mode none` để chỉ thấy tác động của băng thông (mặc định `--mode photo`
+còn loại thêm bản chạy quá 2,5 s/ảnh trên máy này):
 
 ```cmd
-python -m client.agent --server http://localhost:8000 --device-id laptopA --image samples\dog.jpg --bandwidth 100000
-python -m client.agent --server http://localhost:8000 --device-id laptopA --image samples\dog.jpg --bandwidth 5000
-python -m client.agent --server http://localhost:8000 --device-id laptopA --image samples\dog.jpg --bandwidth 2000
-python -m client.agent --server http://localhost:8000 --device-id laptopA --image samples\dog.jpg --bandwidth 600
-python -m client.agent --server http://localhost:8000 --device-id laptopA --image samples\dog.jpg --bandwidth 100
+python -m client.agent --server http://localhost:8000 --device-id laptopA --image samples\dog.jpg --mode none --bandwidth 100000
+python -m client.agent --server http://localhost:8000 --device-id laptopA --image samples\dog.jpg --mode none --bandwidth 30000
+python -m client.agent --server http://localhost:8000 --device-id laptopA --image samples\dog.jpg --mode none --bandwidth 20000
+python -m client.agent --server http://localhost:8000 --device-id laptopA --image samples\dog.jpg --mode none --bandwidth 5000
+python -m client.agent --server http://localhost:8000 --device-id laptopA --image samples\dog.jpg --mode none --bandwidth 3000
+python -m client.agent --server http://localhost:8000 --device-id laptopA --image samples\dog.jpg --mode none --bandwidth 600
+python -m client.agent --server http://localhost:8000 --device-id laptopA --image samples\dog.jpg --mode none --bandwidth 100
 ```
 
-Kết quả mong đợi (ngưỡng tính từ `size_bytes` thật trong Registry, hạn 60 s):
+Kết quả mong đợi (ngưỡng tính từ `size_bytes` thật trong Registry, hạn 60 s; Selector chọn mAP cao nhất):
 
 | `--bandwidth` | Variant được chọn | Vì sao |
 |---|---|---|
-| ≥ 13 677 kbps (ví dụ 100000) | `resnet50_fp32` | top-1 cao nhất (0.7497), 97.8 MB tải trong 8.2 s |
-| 3 443 – 13 676 (ví dụ 5000) | `resnet50_int8` | `resnet50_fp32` cần 164.1 s > 60 s |
-| 1 862 – 3 442 (ví dụ 2000) | `mobilenetv2_fp32` | `resnet50_int8` cần 103.3 s |
-| 488 – 1 861 (ví dụ 600) | `mobilenetv2_int8` | `mobilenetv2_fp32` cần 186.2 s |
+| ≥ 52 819 kbps (ví dụ 100000) | `yolox_x` | mAP cao nhất (51,5 %), 377,8 MB tải trong 31,7 s |
+| 28 900 – 52 818 (ví dụ 30000) | `yolox_l` | `yolox_x` cần 105,6 s > 60 s |
+| 13 501 – 28 899 (ví dụ 20000) | `yolox_m` | `yolox_l` cần 86,7 s |
+| 4 781 – 13 500 (ví dụ 5000) | `yolox_s` | `yolox_m` cần 162 s |
+| 2 696 – 4 780 (ví dụ 3000) | `yolox_tiny` | `yolox_s` cần 95,6 s |
+| 488 – 2 695 (ví dụ 600) | `yolox_nano` | `yolox_tiny` cần 269,6 s |
 | < 488 (ví dụ 100) | lỗi 422 `NO_VARIANT_FITS`, client thoát mã 2 | không bản nào tải kịp |
 
 Client in 7 bước: thông tin thiết bị, đăng ký (`device_class`), đo băng thông, xin model
 (variant, lý do, thời gian ước tính, số miếng theo nguồn), tải từng miếng (nguồn, SHA-256),
-Top-5 nhãn, phản hồi `keep`/`switch`.
+bảng vật thể phát hiện được (độ tin cậy, hộp), phản hồi `keep`/`switch`.
 
 Đo băng thông thật thay vì truyền `--bandwidth`: đặt `PBL4_RATE_LIMIT_KBPS` cho server rồi
 bỏ `--bandwidth` khỏi lệnh client. Client tải `/api/probe` (256 KB) và tự tính kbps.

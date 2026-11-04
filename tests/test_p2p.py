@@ -101,7 +101,7 @@ def _register(client: TestClient, device_id: str, peer_port: int | None, **kw) -
 def _request(client: TestClient, device_id: str) -> dict:
     body = {
         "device_id": device_id,
-        "task": "image_classification",
+        "task": "object_detection",
         "bandwidth_kbps": 600,
         "deadline_s": 60,
         "free_storage_mb": None,

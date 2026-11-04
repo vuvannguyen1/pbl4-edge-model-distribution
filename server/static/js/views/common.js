@@ -117,3 +117,39 @@ export function bandwidthText(r) {
   if (r.bandwidth_kbps) return `${fmt.kbps(r.bandwidth_kbps)} (giới hạn server)`;
   return "không rõ";
 }
+
+// Mã QR dạng SVG (thư viện qrcode-generator nạp ở index.html). Luôn đen trên nền trắng để
+// camera điện thoại đọc được ở cả giao diện tối.
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+export function qrCode(text, label) {
+  const make = globalThis.qrcode;
+  if (!make) return null;
+  const qr = make(0, "M");
+  qr.addData(text);
+  qr.make();
+  const count = qr.getModuleCount();
+  const margin = 4;
+  const total = count + margin * 2;
+  let d = "";
+  for (let y = 0; y < count; y++) {
+    for (let x = 0; x < count; x++) {
+      if (qr.isDark(y, x)) d += `M${x + margin} ${y + margin}h1v1h-1z`;
+    }
+  }
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${total} ${total}`);
+  svg.setAttribute("class", "qr");
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", label);
+  svg.setAttribute("shape-rendering", "crispEdges");
+  const bg = document.createElementNS(SVG_NS, "rect");
+  bg.setAttribute("width", String(total));
+  bg.setAttribute("height", String(total));
+  bg.setAttribute("fill", "#ffffff");
+  const path = document.createElementNS(SVG_NS, "path");
+  path.setAttribute("d", d);
+  path.setAttribute("fill", "#000000");
+  svg.append(bg, path);
+  return svg;
+}

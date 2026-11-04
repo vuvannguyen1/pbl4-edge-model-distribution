@@ -185,6 +185,7 @@ def result_view(result: AgentResult) -> dict[str, Any]:
             else None
         ),
         "top5": [asdict(p) for p in inference.top5],
+        "detections": [asdict(d) for d in inference.detections],
         "load_ms": round(inference.load_ms, 1),
         "latency_ms_median": round(inference.latency_ms_median, 2),
         "runs": inference.runs,

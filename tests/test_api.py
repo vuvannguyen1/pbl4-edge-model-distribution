@@ -116,14 +116,14 @@ def test_request_success_matches_schema(client: TestClient) -> None:
     body = resp.json()
     assert schema_errors("ModelResponse", body) == []
     assert body["request_id"] == "r-0001"
-    assert body["variant"]["id"] == "mobilenetv2_int8"
-    assert body["estimated_download_s"] == 48.7
-    assert "600 kbps" in body["reason"] and "48.7 s" in body["reason"]
+    assert body["variant"]["id"] == "yolox_nano"
+    assert body["estimated_download_s"] == 48.8
+    assert "600 kbps" in body["reason"] and "48.8 s" in body["reason"]
     plan = body["plan"]
     assert [p["index"] for p in plan] == list(range(body["variant"]["chunk_count"]))
     for item in plan:
         assert item["source"] == "server" and item["fallback_url"] is None
-        assert item["url"] == f"http://testserver/api/chunks/mobilenetv2_int8/{item['index']}"
+        assert item["url"] == f"http://testserver/api/chunks/yolox_nano/{item['index']}"
         assert item["offset"] == item["index"] * 1048576
     assert sum(p["size_bytes"] for p in plan) == body["variant"]["size_bytes"]
     assert "storage_path" not in resp.text and "CV/" not in resp.text
@@ -147,9 +147,9 @@ def test_request_unknown_preferred_variant_is_404(client: TestClient) -> None:
 
 def test_request_preferred_variant_bypasses_selector(client: TestClient) -> None:
     register(client)
-    resp = request_model(client, bandwidth_kbps=100_000, preferred_variant="mobilenetv2_int8")
+    resp = request_model(client, bandwidth_kbps=100_000, preferred_variant="yolox_nano")
     body = resp.json()
-    assert body["variant"]["id"] == "mobilenetv2_int8"
+    assert body["variant"]["id"] == "yolox_nano"
     assert len(body["plan"]) == body["variant"]["chunk_count"]
 
 
@@ -179,7 +179,7 @@ def test_request_extra_field_is_400(client: TestClient) -> None:
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"task": "object_detection"},
+        {"task": "segmentation"},
         {"bandwidth_kbps": 0},
         {"deadline_s": -1},
         {"have_variants": ["a", "a"]},
@@ -195,8 +195,8 @@ def test_request_uses_server_rate_limit_when_bandwidth_null(app_factory) -> None
     with TestClient(app_factory(rate_limit_kbps=2000)) as client:
         register(client)
         body = request_model(client, bandwidth_kbps=None).json()
-    assert body["variant"]["id"] == "mobilenetv2_fp32"
-    assert body["estimated_download_s"] == 55.9
+    assert body["variant"]["id"] == "yolox_nano"  # ssd_mobilenet_v1_12_int8 cũng kịp nhưng mAP thấp hơn
+    assert body["estimated_download_s"] == 14.6
 
 
 def test_request_estimate_null_when_bandwidth_unknown(client: TestClient) -> None:
@@ -215,7 +215,7 @@ def test_request_public_base_url(app_factory) -> None:
 
 def test_have_variants_not_trusted_blindly(client: TestClient) -> None:
     register(client)
-    body = request_model(client, bandwidth_kbps=600, have_variants=["mobilenetv2_int8"]).json()
+    body = request_model(client, bandwidth_kbps=600, have_variants=["yolox_nano"]).json()
     assert len(body["plan"]) == body["variant"]["chunk_count"]
 
 
@@ -226,14 +226,14 @@ def test_have_variants_trusted_after_complete(client: TestClient) -> None:
     have = {
         "device_id": "phoneB",
         "request_id": first["request_id"],
-        "variant_id": "mobilenetv2_int8",
+        "variant_id": "yolox_nano",
         "chunks": list(range(n)),
         "complete": True,
         "bandwidth_kbps": 600,
         "bad_chunks": [],
     }
     assert client.post("/api/have", json=have).status_code == 200
-    second = request_model(client, bandwidth_kbps=600, have_variants=["mobilenetv2_int8"]).json()
+    second = request_model(client, bandwidth_kbps=600, have_variants=["yolox_nano"]).json()
     assert second["plan"] == []
     assert schema_errors("ModelResponse", second) == []
 
@@ -277,7 +277,7 @@ def test_chunk_from_fake_store(app_factory, fake_store) -> None:
 
 @pytest.mark.parametrize("index", [-1, 4, 999])
 def test_chunk_out_of_range_is_404(client: TestClient, index: int) -> None:
-    assert_error(client.get(f"/api/chunks/mobilenetv2_int8/{index}"), 404, "CHUNK_OUT_OF_RANGE")
+    assert_error(client.get(f"/api/chunks/yolox_nano/{index}"), 404, "CHUNK_OUT_OF_RANGE")
 
 
 def test_chunk_unknown_variant_is_404(client: TestClient) -> None:
@@ -285,7 +285,7 @@ def test_chunk_unknown_variant_is_404(client: TestClient) -> None:
 
 
 def test_chunk_non_integer_index_is_400(client: TestClient) -> None:
-    assert_error(client.get("/api/chunks/mobilenetv2_int8/abc"), 400, "BAD_REQUEST")
+    assert_error(client.get("/api/chunks/yolox_nano/abc"), 400, "BAD_REQUEST")
 
 
 def test_chunk_not_ready_variant_is_404(app_factory, fake_store) -> None:
@@ -338,7 +338,7 @@ def test_have_with_bad_chunks_and_null_bandwidth(client: TestClient) -> None:
     body = _have(
         rid,
         bandwidth_kbps=None,
-        bad_chunks=[{"index": 2, "source_url": "http://10.0.0.9:9000/chunks/mobilenetv2_int8/2"}],
+        bad_chunks=[{"index": 2, "source_url": "http://10.0.0.9:9000/chunks/yolox_nano/2"}],
     )
     assert client.post("/api/have", json=body).status_code == 200
 
@@ -351,7 +351,7 @@ def test_have_errors(client: TestClient) -> None:
     )
     assert_error(client.post("/api/have", json=_have("r-9999")), 400, "BAD_REQUEST")
     assert_error(
-        client.post("/api/have", json=_have(rid, variant_id="resnet50_fp32")),
+        client.post("/api/have", json=_have(rid, variant_id="yolox_x")),
         404,
         "UNKNOWN_VARIANT",
     )
@@ -397,21 +397,21 @@ def test_feedback_keep_and_jsonl(client: TestClient) -> None:
 def test_feedback_switch_to_smaller_variant_and_remember_class(client: TestClient) -> None:
     register(client)
     first = request_model(client, bandwidth_kbps=100_000).json()
-    assert first["variant"]["id"] == "resnet50_fp32"
+    assert first["variant"]["id"] == "yolox_x"
     resp = client.post(
         "/api/feedback",
-        json=_feedback(first["request_id"], variant_id="resnet50_fp32", latency_ms_median=900.0),
+        json=_feedback(first["request_id"], variant_id="yolox_x", latency_ms_median=900.0),
     )
     body = resp.json()
     assert schema_errors("FeedbackResponse", body) == []
     assert body["action"] == "switch"
-    assert body["new_variant_id"] == "resnet50_int8"  # nhỏ hơn và top-1 cao nhất
+    assert body["new_variant_id"] == "yolox_l"  # nhỏ hơn và mAP cao nhất
     assert "900 ms" in body["reason"] and "500 ms" in body["reason"]
 
     # lần xin sau của máy cùng lớp ưu tiên variant đã ghi nhớ
     register(client, device_id="phoneD")
     again = request_model(client, device_id="phoneD", bandwidth_kbps=100_000).json()
-    assert again["variant"]["id"] == "resnet50_int8"
+    assert again["variant"]["id"] == "yolox_l"
     assert "ghi nhớ" in again["reason"]
 
 
@@ -430,7 +430,7 @@ def test_feedback_errors(client: TestClient) -> None:
     )
     assert_error(client.post("/api/feedback", json=_feedback("r-0404")), 400, "BAD_REQUEST")
     assert_error(
-        client.post("/api/feedback", json=_feedback(rid, variant_id="resnet50_int8")),
+        client.post("/api/feedback", json=_feedback(rid, variant_id="yolox_s")),
         404,
         "UNKNOWN_VARIANT",
     )

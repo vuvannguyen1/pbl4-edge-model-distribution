@@ -4,12 +4,14 @@
 - Model của tin nhắn client gửi lên đặt thêm `strict=True` để không tự ép kiểu
   (ví dụ "6144" -> 6144), đúng tinh thần của schema.
 - Ràng buộc có điều kiện (if/then/else) và `uniqueItems` được viết bằng validator.
+- Phần mở rộng cho phát hiện vật thể (capabilities, mode, khối detection, peer WebRTC,
+  /api/announce, /api/signal) đều là trường tuỳ chọn: client 1.0 cũ gửi/nhận như trước.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -24,13 +26,15 @@ DeviceId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,32}$")]
 VariantId = Annotated[str, StringConstraints(pattern=r"^[a-z0-9_]{1,64}$")]
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 HttpUrl = Annotated[str, StringConstraints(pattern=r"^http://")]
+# Miếng từ peer: HTTP (client Python) hoặc WebRTC DataChannel (trình duyệt, webrtc://<device_id>/...)
+ChunkUrl = Annotated[str, StringConstraints(pattern=r"^(http|webrtc)://")]
 NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
 Ratio = Annotated[float, Field(ge=0, le=1)]
 NullableRatio = Annotated[float | None, Field(ge=0, le=1)]
 NullableNonNeg = Annotated[float | None, Field(ge=0)]
 PositiveOrNull = Annotated[float | None, Field(gt=0)]
 
-Platform = Literal["android", "android_browser", "ios_browser", "windows", "linux"]
+Platform = Literal["android", "android_browser", "ios_browser", "web_desktop", "windows", "linux"]
 DEVICE_CLASS_PATTERN = r"^[a-z_]+_(arm64|arm32|x64)_(lt4gb|4-8gb|gt8gb)$"
 
 
@@ -55,6 +59,15 @@ def _ensure_unique(values: list) -> list:
 # ---------------------------------------------------------------- Đăng ký
 
 
+class Capabilities(_Incoming):
+    """Năng lực thiết bị (tuỳ chọn). Trình duyệt gửi để Selector ước lượng tốc độ suy luận."""
+
+    threads: int = Field(default=1, ge=1, le=64)  # số luồng onnxruntime dùng được
+    webgpu: bool = False
+    camera: bool = False
+    p2p: Literal["webrtc", "http", "none"] = "none"  # cách thiết bị chia sẻ miếng cho máy khác
+
+
 class RegisterRequest(_Incoming):
     protocol_version: Literal["1.0"]
     device_id: DeviceId
@@ -63,6 +76,7 @@ class RegisterRequest(_Incoming):
     ram_mb: int = Field(ge=1)
     runtime: NonEmptyStr
     peer_port: int | None = Field(ge=1024, le=65535)
+    capabilities: Capabilities | None = None
 
 
 class RegisterResponse(_Outgoing):
@@ -84,6 +98,10 @@ class ModelRequest(_Incoming):
     free_storage_mb: NullableNonNeg
     preferred_variant: VariantId | None
     have_variants: list[VariantId]
+    # live: camera liên tục, ưu tiên tốc độ; photo: ảnh chụp, cho phép model nặng hơn.
+    # null (client 1.0): không lọc theo năng lực tính toán.
+    mode: Literal["live", "photo"] | None = None
+    target_fps: float | None = Field(default=None, gt=0, le=120)
 
     _unique_have = field_validator("have_variants")(_ensure_unique)
 
@@ -107,6 +125,12 @@ class Variant(_Outgoing):
     input_shape: list[Annotated[int, Field(ge=1)]] = Field(min_length=1)
     input_dtype: Literal["float", "uint8"]
     normalize: Normalize
+    # Mở rộng cho phát hiện vật thể (null với model phân loại ảnh)
+    task: str | None = None
+    map50_95: NullableRatio = None
+    gflops: NullableNonNeg = None
+    runtimes: list[str] | None = None
+    detection: dict[str, Any] | None = None  # contract.detection của Model Card
 
 
 class PlanItem(_Outgoing):
@@ -115,7 +139,7 @@ class PlanItem(_Outgoing):
     size_bytes: int = Field(ge=1, le=1048576)
     sha256: Sha256
     source: Literal["server", "peer"]
-    url: HttpUrl
+    url: ChunkUrl
     fallback_url: HttpUrl | None
 
     @model_validator(mode="after")
@@ -140,7 +164,7 @@ class ModelResponse(_Outgoing):
 
 class BadChunk(_Incoming):
     index: int = Field(ge=0)
-    source_url: HttpUrl
+    source_url: ChunkUrl
 
 
 class HaveRequest(_Incoming):
@@ -186,6 +210,9 @@ class FeedbackRequest(_Incoming):
     peak_ram_mb: NullableNonNeg
     top1_label: str | None
     top1_confidence: NullableRatio
+    # Phát hiện vật thể (tuỳ chọn): FPS đo khi chạy camera, số vật thể ở lượt đo
+    fps: NullableNonNeg = None
+    detections: int | None = Field(default=None, ge=0)
 
 
 class FeedbackResponse(_Outgoing):
@@ -252,6 +279,43 @@ class ManualFeedbackResponse(_Outgoing):
     status: Literal["accepted", "duplicate"]
     received_at: NonEmptyStr
     evaluation: ManualEvaluation
+
+
+# ---------------------------------------------------------------- Khai báo model có sẵn
+
+
+class HeldVariant(_Incoming):
+    variant_id: VariantId
+    sha256: Sha256
+
+
+class AnnounceRequest(_Incoming):
+    """Thiết bị báo đã có đủ model (vd. trình duyệt mở lại trang, model lấy từ kho trên máy) để
+    server ghép P2P mà không phải lập một lượt tải. SHA-256 phải khớp Registry."""
+
+    device_id: DeviceId
+    variants: list[HeldVariant] = Field(max_length=32)
+
+
+class AnnounceResponse(_Outgoing):
+    ok: Literal[True] = True
+    accepted: list[VariantId]
+    rejected: list[VariantId]
+
+
+# ---------------------------------------------------------------- Signaling WebRTC
+
+SessionId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,64}$")]
+
+
+class SignalMessage(_Incoming):
+    """Tin nhắn trao đổi SDP giữa hai trình duyệt; server chỉ chuyển tiếp, không đọc `data`."""
+
+    from_device: DeviceId
+    to_device: DeviceId
+    type: Literal["offer", "answer", "candidate", "bye"]
+    session: SessionId
+    data: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------- Lỗi

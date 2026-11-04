@@ -57,9 +57,17 @@ def test_dashboard_page_served(client: TestClient) -> None:
 
 def test_summary_empty_server(client: TestClient) -> None:
     body = client.get("/admin-api/summary").json()
-    assert body["devices"] == {"registered": 0, "active": 0, "sharing_peers": 0}
+    assert body["devices"] == {
+        "registered": 0,
+        "active": 0,
+        "sharing_peers": 0,
+        "browsers": 0,
+        "python_clients": 0,
+        "online_browsers": 0,
+    }
+    assert body["p2p_webrtc"] == {"offers": 0, "relayed": 0}
     assert body["requests"]["total"] == 0
-    assert body["variants"]["total"] == 4
+    assert body["variants"]["total"] == 10
     assert body["server"]["selector_version"] == "rule-v1"
     assert body["chunks_actual"]["reports"] == 0
 
@@ -101,8 +109,8 @@ def test_variants_list_and_detail(client: TestClient) -> None:
     assert [r["variant_id"] for r in rows] == sorted(r["variant_id"] for r in rows)
     assert all(r["distributable"] for r in rows)
 
-    detail = client.get("/admin-api/variants/mobilenetv2_int8").json()
-    assert detail["model_card"]["variant_id"] == "mobilenetv2_int8"
+    detail = client.get("/admin-api/variants/yolox_nano").json()
+    assert detail["model_card"]["variant_id"] == "yolox_nano"
     assert len(detail["chunks"]) == detail["chunk_count"]
 
 

@@ -10,6 +10,8 @@
 | PBL4_LATENCY_SLO_MS    | 500                            |
 | PBL4_DATA_DIR          | data                           |
 | PBL4_DATABASE_URL      | sqlite tại <PBL4_DATA_DIR>/pbl4.db |
+| PBL4_HTTPS_PORT        | rỗng (`python -m server.serve` tự đặt) |
+| PBL4_HTTP_PORT         | rỗng (`python -m server.serve` tự đặt) |
 
 Đường dẫn tương đối tính từ gốc repo, không tính từ thư mục đang đứng.
 """
@@ -51,6 +53,10 @@ def _parse_non_negative(name: str, value: str) -> float:
     return number
 
 
+def _parse_port(value: str) -> int | None:
+    return int(value) if value.strip() else None
+
+
 @dataclass(frozen=True)
 class Settings:
     registry_path: Path
@@ -60,6 +66,10 @@ class Settings:
     peer_enabled: bool
     latency_slo_ms: float
     data_dir: Path
+    # Cổng HTTPS của `python -m server.serve`; trang /m/ mở qua HTTP dùng để chỉ sang bản HTTPS
+    https_port: int | None = None
+    # Cổng HTTP, để dashboard in link/QR đúng cả khi đang mở qua cổng HTTPS
+    http_port: int | None = None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
@@ -78,6 +88,8 @@ class Settings:
                 "PBL4_LATENCY_SLO_MS", env.get("PBL4_LATENCY_SLO_MS", "500")
             ),
             data_dir=_resolve_path(env.get("PBL4_DATA_DIR", "data")),
+            https_port=_parse_port(env.get("PBL4_HTTPS_PORT", "")),
+            http_port=_parse_port(env.get("PBL4_HTTP_PORT", "")),
         )
 
     @property

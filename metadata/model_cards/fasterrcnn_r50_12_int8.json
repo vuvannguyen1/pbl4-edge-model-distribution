@@ -1,0 +1,78 @@
+{
+  "model_id": "faster_rcnn_r50_fpn",
+  "variant_id": "fasterrcnn_r50_12_int8",
+  "version": "1",
+  "artifact": {
+    "file": "CV/fasterrcnn_r50_12_int8.onnx"
+  },
+  "task": {
+    "id": "object_detection",
+    "group": "CV"
+  },
+  "model": {
+    "family": "Faster R-CNN R-50-FPN",
+    "precision": "int8",
+    "compression_level": 1
+  },
+  "contract": {
+    "input_shape": [
+      3,
+      512,
+      512
+    ],
+    "input_dtype": "float",
+    "preprocessing": {
+      "normalize": {
+        "mean": [
+          0.40384352941176466,
+          0.4546921568627451,
+          0.4814576470588235
+        ],
+        "std": [
+          0.00392156862745098,
+          0.00392156862745098,
+          0.00392156862745098
+        ]
+      }
+    },
+    "detection": {
+      "format": "faster_rcnn",
+      "input_size": [
+        512,
+        512
+      ],
+      "resize": "keep_ratio",
+      "min_side": 512,
+      "max_side": 864,
+      "size_divisor": 32,
+      "layout": "CHW",
+      "color": "BGR",
+      "pad_value": null,
+      "label_map": "coco80",
+      "class_offset": 1,
+      "outputs": [
+        "boxes",
+        "labels",
+        "scores"
+      ]
+    }
+  },
+  "quality": {
+    "top1_accuracy": null,
+    "map50_95": 0.34,
+    "source": "COCO val2017 theo công bố gốc, chưa đo lại trên thiết bị của nhóm"
+  },
+  "compute": {
+    "gflops": 85.0
+  },
+  "requirements": {
+    "supported_runtimes": [
+      "onnxruntime",
+      "onnxruntime-web"
+    ],
+    "minimum_ram_mb": 900
+  },
+  "provenance": {
+    "source_url": "https://github.com/onnx/models/tree/main/validated/vision/object_detection_segmentation/faster-rcnn"
+  }
+}

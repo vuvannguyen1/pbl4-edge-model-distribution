@@ -1,37 +1,59 @@
 {
   "request_id": "r-0002",
   "variant": {
-    "id": "mobilenetv2_int8",
-    "file": "mobilenetv2-12-int8.onnx",
-    "base_model": "mobilenetv2",
-    "level": 1,
-    "precision": "int8",
-    "size_bytes": 3655033,
-    "sha256": "cc028fe6cae7bc11a4ff53cfc9b79c920e8be65ce33a904ec3e2a8f66d77f95f",
+    "id": "yolox_nano",
+    "file": "yolox_nano.onnx",
+    "base_model": "yolox",
+    "level": 0,
+    "precision": "fp32",
+    "size_bytes": 3659407,
+    "sha256": "c789161ed43c8269fcd4e67c67eeeb4e80c622da2eb296a20bc6007bd18a0b7d",
     "chunk_size": 1048576,
     "chunk_count": 4,
-    "top1_accuracy": 0.683,
+    "top1_accuracy": 0.0,
     "input_shape": [
       1,
       3,
-      224,
-      224
+      416,
+      416
     ],
     "input_dtype": "float",
     "normalize": {
       "mean": [
-        0.485,
-        0.456,
-        0.406
+        0.0,
+        0.0,
+        0.0
       ],
       "std": [
-        0.229,
-        0.224,
-        0.225
+        0.00392156862745098,
+        0.00392156862745098,
+        0.00392156862745098
+      ]
+    },
+    "task": "object_detection",
+    "map50_95": 0.258,
+    "gflops": 1.08,
+    "runtimes": [
+      "onnxruntime",
+      "onnxruntime-web"
+    ],
+    "detection": {
+      "format": "yolox",
+      "input_size": [
+        416,
+        416
+      ],
+      "resize": "letterbox",
+      "layout": "NCHW",
+      "color": "BGR",
+      "pad_value": 114.0,
+      "label_map": "coco80",
+      "outputs": [
+        "output"
       ]
     }
   },
-  "reason": "Lớp android_arm64_4-8gb đang dùng mobilenetv2_int8. phoneA cùng lớp đã có đủ 4 miếng, nên lấy miếng 0-1 từ phoneA và miếng 2-3 từ server để tải song song.",
+  "reason": "Lớp android_arm64_4-8gb đang dùng yolox_nano. phoneA cùng lớp đã có đủ 4 miếng, nên lấy miếng 0-1 từ phoneA và miếng 2-3 từ server để tải song song.",
   "estimated_download_s": 6.2,
   "plan": [
     {
@@ -40,8 +62,8 @@
       "size_bytes": 1048576,
       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "source": "peer",
-      "url": "http://192.168.137.12:9000/chunks/mobilenetv2_int8/0",
-      "fallback_url": "http://192.168.137.1:8000/api/chunks/mobilenetv2_int8/0"
+      "url": "http://192.168.137.12:9000/chunks/yolox_nano/0",
+      "fallback_url": "http://192.168.137.1:8000/api/chunks/yolox_nano/0"
     },
     {
       "index": 1,
@@ -49,8 +71,8 @@
       "size_bytes": 1048576,
       "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "source": "peer",
-      "url": "http://192.168.137.12:9000/chunks/mobilenetv2_int8/1",
-      "fallback_url": "http://192.168.137.1:8000/api/chunks/mobilenetv2_int8/1"
+      "url": "http://192.168.137.12:9000/chunks/yolox_nano/1",
+      "fallback_url": "http://192.168.137.1:8000/api/chunks/yolox_nano/1"
     },
     {
       "index": 2,
@@ -58,16 +80,16 @@
       "size_bytes": 1048576,
       "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "source": "server",
-      "url": "http://192.168.137.1:8000/api/chunks/mobilenetv2_int8/2",
+      "url": "http://192.168.137.1:8000/api/chunks/yolox_nano/2",
       "fallback_url": null
     },
     {
       "index": 3,
       "offset": 3145728,
-      "size_bytes": 509305,
+      "size_bytes": 513679,
       "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
       "source": "server",
-      "url": "http://192.168.137.1:8000/api/chunks/mobilenetv2_int8/3",
+      "url": "http://192.168.137.1:8000/api/chunks/yolox_nano/3",
       "fallback_url": null
     }
   ]

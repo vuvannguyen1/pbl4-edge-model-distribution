@@ -51,7 +51,7 @@ packages = ["server", "server.db", "client", "selector"]
 
 [tool.setuptools.package-data]
 # giao diện web: HTML/CSS/JS/font/icon tĩnh, không cần build
-server = ["static/**/*"]
+server = ["static/**/*", "webclient/**/*"]
 client = ["web/**/*"]
 
 [tool.pytest.ini_options]
