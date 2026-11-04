@@ -56,40 +56,43 @@ def test_admin_api_list_and_stats(test_app_and_client):
     data = res.json()
     assert data["count"] >= 4
     variant_ids = [v["variant_id"] for v in data["variants"]]
-    assert "mobilenetv2_int8" in variant_ids
+    assert "yolox_nano" in variant_ids
 
     # 3. Chi tiết variant
-    res = client.get("/admin-api/variants/mobilenetv2_int8")
+    res = client.get("/admin-api/variants/yolox_nano")
     assert res.status_code == 200
     v_data = res.json()
-    assert v_data["variant_id"] == "mobilenetv2_int8"
+    assert v_data["variant_id"] == "yolox_nano"
     assert v_data["artifact"] is not None
 
     # 4. Cập nhật status
-    res = client.post("/admin-api/variants/mobilenetv2_int8/status", json={"status": "disabled"})
+    res = client.post("/admin-api/variants/yolox_nano/status", json={"status": "disabled"})
     assert res.status_code == 200
     assert res.json()["new_status"] == "disabled"
 
-    res = client.get("/admin-api/variants/mobilenetv2_int8")
+    res = client.get("/admin-api/variants/yolox_nano")
     assert res.json()["status"] == "disabled"
 
 
 def test_admin_upload_model(test_app_and_client):
     _, client, settings = test_app_and_client
     repo_root = Path(__file__).resolve().parent.parent
-    src_onnx = repo_root / "models" / "CV" / "MobileNetV2_INT8.onnx"
+    src_onnx = repo_root / "models" / "CV" / "yolox_nano.onnx"
 
     payload = {
         "file_path": str(src_onnx),
-        "filename": "MobileNetV2_Custom.onnx",
+        "filename": "yolox_nano_custom.onnx",
         "metadata": {
-            "variant_id": "mobilenetv2_custom",
-            "model_id": "mobilenetv2",
-            "task_id": "image_classification",
-            "family": "MobileNetV2",
-            "precision": "int8",
-            "level": 1,
-            "top1_accuracy": 0.72,
+            "variant_id": "yolox_nano_custom",
+            "model_id": "yolox",
+            "task_id": "object_detection",
+            "family": "YOLOX",
+            "precision": "fp32",
+            "level": 0,
+            "map50_95": 0.258,
+            "gflops": 1.08,
+            "supported_runtimes": ["onnxruntime", "onnxruntime-web"],
+            "input_shape": [1, 3, 416, 416],
             "version": "2.0",
         },
     }
@@ -98,11 +101,11 @@ def test_admin_upload_model(test_app_and_client):
     assert res.status_code == 200
     data = res.json()
     assert data["status"] == "success"
-    assert data["variant_id"] == "mobilenetv2_custom"
+    assert data["variant_id"] == "yolox_nano_custom"
     assert data["chunk_count"] > 0
 
     # Kiểm tra đã xuất hiện trong danh sách admin
-    res = client.get("/admin-api/variants/mobilenetv2_custom")
+    res = client.get("/admin-api/variants/yolox_nano_custom")
     assert res.status_code == 200
     assert res.json()["status"] == "ready"
 
@@ -126,11 +129,11 @@ def test_performance_feedback_saved_to_db(test_app_and_client):
     # 2. Xin model
     req_payload = {
         "device_id": "phone_test",
-        "task": "image_classification",
+        "task": "object_detection",
         "bandwidth_kbps": 2000.0,
         "deadline_s": 30.0,
         "free_storage_mb": 1024.0,
-        "preferred_variant": "mobilenetv2_int8",
+        "preferred_variant": "yolox_nano",
         "have_variants": [],
     }
     res = client.post("/api/request", json=req_payload)
@@ -142,7 +145,7 @@ def test_performance_feedback_saved_to_db(test_app_and_client):
     fb_payload = {
         "request_id": request_id,
         "device_id": "phone_test",
-        "variant_id": "mobilenetv2_int8",
+        "variant_id": "yolox_nano",
         "download_ms": 1250.0,
         "load_ms": 120.0,
         "latency_ms_median": 35.5,
@@ -150,7 +153,7 @@ def test_performance_feedback_saved_to_db(test_app_and_client):
         "peak_ram_mb": 150.0,
         "chunks_from_server": 4,
         "chunks_from_peer": 0,
-        "top1_label": "tabby cat",
+        "top1_label": "dog",
         "top1_confidence": 0.88,
     }
     res = client.post("/api/feedback", json=fb_payload)

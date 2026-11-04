@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import mimetypes
 import os
 import sys
 from collections.abc import AsyncIterator
@@ -19,20 +20,27 @@ from typing import Any, TypeVar
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse as _BaseJSONResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
+from starlette.datastructures import MutableHeaders
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from server.admin_api import MODEL_CARDS_DIR
+from server.admin_api import router as admin_router
 from server.config import PROTOCOL_VERSION, Settings
 from server.errors import ProtocolError, bad_request, error_body
 from server.ratelimit import TokenBucket
 from server.registry import Registry
 from server.schemas import (
+    AnnounceRequest,
     FeedbackRequest,
     HaveRequest,
     ManualFeedbackRequest,
     ModelRequest,
     RegisterRequest,
+    SignalMessage,
 )
 from server.selector import ModelSelector, default_selector
 from server.service import DistributionService
@@ -46,6 +54,27 @@ PROBE_MIN_KB = 16
 PROBE_MAX_KB = 1024
 PROBE_DEFAULT_KB = 256
 OCTET_STREAM = "application/octet-stream"
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+# CSS/JS/font/icon dùng chung với giao diện client; nằm trong client/ vì client phải
+# chạy độc lập (Termux chỉ có thư mục client/)
+SHARED_UI_DIR = Path(__file__).resolve().parent.parent / "client" / "web" / "shared"
+# Giao diện client /app (điện thoại, laptop): xin model phát hiện vật thể, chạy trên camera
+# bằng onnxruntime-web, chia sẻ model P2P qua WebRTC
+WEBCLIENT_DIR = Path(__file__).resolve().parent / "webclient"
+CLIENT_PATH = "/app"
+# Trang /app được "cross-origin isolated" để onnxruntime-web dùng WASM đa luồng (SharedArrayBuffer).
+# Mọi tài nguyên của trang đều cùng origin nên require-corp không chặn gì.
+ISOLATION_HEADERS = {
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Embedder-Policy": "require-corp",
+    "Cross-Origin-Resource-Policy": "same-origin",
+}
+# Windows không phải lúc nào cũng biết .mjs/.wasm: onnxruntime-web cần đúng MIME để nạp
+mimetypes.add_type("text/javascript", ".mjs")
+mimetypes.add_type("application/wasm", ".wasm")
+# Dashboard gửi header này khi "xin model thử": server ghi request là source="web"
+SOURCE_HEADER = "X-PBL4-Source"
+WEB_SOURCE = "web-ui"
 
 M = TypeVar("M", bound=BaseModel)
 
@@ -105,6 +134,46 @@ def setup_logging(logs_dir: Path) -> None:
 
 
 # ---------------------------------------------------------------- helper HTTP
+
+
+class NoCacheStaticFiles(StaticFiles):
+    """Giao diện luôn hỏi lại server (ETag, trả 304 nếu không đổi): trình duyệt không chạy JS
+    cũ sau khi cập nhật code. Chỉ có Last-Modified thì Chrome tự cache theo phỏng đoán."""
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Any:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+class IsolationHeaders:
+    """Thêm ISOLATION_HEADERS cho response dưới `prefix`.
+
+    Middleware ASGI thuần (không dùng @app.middleware("http")): BaseHTTPMiddleware bọc kênh
+    nhận của request nên long-poll /api/signal không còn thấy trình duyệt đóng kết nối.
+    """
+
+    def __init__(self, app: Any, prefix: str) -> None:
+        self.app = app
+        self.prefix = prefix
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http" or not scope["path"].startswith(self.prefix):
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message: Any) -> None:
+            if message["type"] == "http.response.start":
+                MutableHeaders(scope=message).update(ISOLATION_HEADERS)
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
+class JSONResponse(_BaseJSONResponse):
+    """JSON kèm `charset=utf-8`: PowerShell 5.1 và vài client không tự đoán UTF-8, đọc sai dấu."""
+
+    media_type = "application/json; charset=utf-8"
 
 
 def _json(model: BaseModel, status_code: int = 200) -> JSONResponse:
@@ -204,24 +273,31 @@ def create_app(settings: Settings | None = None, selector: ModelSelector | None 
         title="PBL4 Edge Model Distribution",
         version=PROTOCOL_VERSION,
         description="Server phân phối model ONNX theo docs/protocol.md (Protocol 1.0).",
+        default_response_class=JSONResponse,
     )
     app.state.settings = settings
     app.state.service = service
     app.state.bucket = bucket
 
-    # Khởi tạo CSDL SQL và đồng bộ Registry ban đầu
+    # Khởi tạo CSDL SQL (theo settings.data_dir, để test không chạm data/ thật) và đồng bộ
+    # Registry ban đầu. CSDL lỗi không chặn phân phối: luồng Protocol chỉ dựa vào Registry.
     try:
-        from server.db import get_session_factory, init_db, sync_data_to_db, sync_registry_to_db
+        from server.db import (
+            get_session_factory,
+            init_db,
+            init_engine,
+            sync_data_to_db,
+            sync_registry_to_db,
+        )
+
+        settings.data_dir.mkdir(parents=True, exist_ok=True)
+        init_engine(settings.database_url)
         init_db()
         with get_session_factory()() as db_session:
-            sync_registry_to_db(
-                db_session,
-                settings.registry_path,
-                settings.registry_path.parent.parent / "metadata" / "model_cards",
-            )
+            sync_registry_to_db(db_session, settings.registry_path, MODEL_CARDS_DIR)
             sync_data_to_db(db_session, settings.data_dir)
     except Exception as exc:
-        logger.debug("Khởi tạo CSDL hoặc đồng bộ: %s", exc)
+        logger.warning("Không khởi tạo được CSDL (%s): %s", settings.database_url, exc)
 
     ready = registry.ready_variants()
     logger.info(
@@ -235,6 +311,11 @@ def create_app(settings: Settings | None = None, selector: ModelSelector | None 
         "bật" if settings.peer_enabled else "tắt",
         f"{settings.latency_slo_ms:g}",
         settings.data_dir,
+    )
+    logger.info(
+        "Giao diện client (xin model phát hiện vật thể, chạy trên camera): "
+        "http://<IP máy server>:<cổng>%s/ — chạy `python -m server.serve` để có link HTTPS",
+        CLIENT_PATH,
     )
 
     # ------------------------------------------------------------ lỗi
@@ -294,7 +375,8 @@ def create_app(settings: Settings | None = None, selector: ModelSelector | None 
     @app.post("/api/request")
     async def request_model(request: Request) -> JSONResponse:
         req = parse_model(ModelRequest, await read_json(request))
-        return _json(service.request_model(req, base_url_for(request, settings)))
+        source = "web" if request.headers.get(SOURCE_HEADER) == WEB_SOURCE else "client"
+        return _json(service.request_model(req, base_url_for(request, settings), source))
 
     @app.get("/api/chunks/{variant_id}/{index}")
     async def get_chunk(variant_id: str, index: int) -> StreamingResponse:
@@ -318,128 +400,66 @@ def create_app(settings: Settings | None = None, selector: ModelSelector | None 
             return _json(service.manual_feedback(parse_model(ManualFeedbackRequest, data)))
         return _json(service.feedback(parse_model(FeedbackRequest, data)))
 
+    @app.post("/api/announce")
+    async def announce(request: Request) -> JSONResponse:
+        return _json(service.announce(parse_model(AnnounceRequest, await read_json(request))))
+
+    # ------------------------------------------------------------ signaling WebRTC
+
+    @app.post("/api/signal")
+    async def signal_post(request: Request) -> JSONResponse:
+        msg = parse_model(SignalMessage, await read_json(request))
+        if service.devices.get(msg.from_device) is None:
+            raise ProtocolError("UNKNOWN_DEVICE", f"Thiết bị '{msg.from_device}' chưa đăng ký.")
+        delivered = service.signals.post(msg.model_dump())
+        return JSONResponse({"ok": True, "delivered": delivered})
+
+    @app.get("/api/signal/{device_id}")
+    async def signal_wait(request: Request, device_id: str, wait: float = 20.0) -> JSONResponse:
+        if service.devices.get(device_id) is None:
+            raise ProtocolError("UNKNOWN_DEVICE", f"Thiết bị '{device_id}' chưa đăng ký.")
+        messages = await service.signals.wait(device_id, wait, request.is_disconnected)
+        return JSONResponse({"messages": messages})
+
     @app.post("/api/user-feedback")
     async def user_feedback_endpoint(request: Request) -> JSONResponse:
         from server.user_feedback_handler import record_user_feedback
         data = await read_json(request)
         if not isinstance(data, dict):
             raise bad_request("Nội dung phải là một đối tượng JSON.")
-        res = record_user_feedback(data)
+        res = record_user_feedback(data, settings.user_feedback_log)
         return JSONResponse(res)
 
-    # ------------------------------------------------------------ Admin & MLOps API
+    # ------------------------------------------------------------ dashboard web
 
-    @app.get("/admin-api/feedback-stats")
-    async def admin_feedback_stats() -> JSONResponse:
-        from server.db import get_feedback_statistics, get_session_factory
-        with get_session_factory()() as db_session:
-            return JSONResponse(get_feedback_statistics(db_session))
+    app.include_router(admin_router)
+    # /ui/shared phải mount trước /ui (Starlette khớp theo thứ tự)
+    app.mount("/ui/shared", NoCacheStaticFiles(directory=SHARED_UI_DIR), name="ui-shared")
+    app.mount("/ui", NoCacheStaticFiles(directory=STATIC_DIR, html=True), name="ui")
 
-    @app.get("/admin-api/models")
-    async def admin_list_models() -> JSONResponse:
-        from sqlalchemy import select
-        from sqlalchemy.orm import joinedload
-        from server.db import ModelVariantRecord, get_session_factory
-        with get_session_factory()() as db_session:
-            stmt = select(ModelVariantRecord).options(
-                joinedload(ModelVariantRecord.model),
-                joinedload(ModelVariantRecord.artifact),
-            )
-            variants = db_session.scalars(stmt).unique().all()
-            result = [
-                {
-                    "variant_id": v.variant_id,
-                    "model_id": v.model_id,
-                    "task_id": v.model.task_id if v.model else "",
-                    "family": v.model.family if v.model else "",
-                    "version": v.version,
-                    "precision": v.precision,
-                    "status": v.status,
-                    "top1_accuracy": v.top1_accuracy,
-                    "file": v.artifact.filename if v.artifact else "",
-                    "size_bytes": v.artifact.size_bytes if v.artifact else 0,
-                    "chunk_count": v.artifact.chunk_count if v.artifact else 0,
-                }
-                for v in variants
-            ]
-            return JSONResponse({"count": len(result), "variants": result})
+    # ------------------------------------------------------------ trang điện thoại
 
-    @app.get("/admin-api/variants/{variant_id}")
-    async def admin_get_variant(variant_id: str) -> JSONResponse:
-        from server.db import ModelVariantRecord, get_session_factory
-        with get_session_factory()() as db_session:
-            v = db_session.get(ModelVariantRecord, variant_id)
-            if not v:
-                return _error_response("NOT_FOUND", f"Không tìm thấy variant {variant_id}", 404)
-            card = json.loads(v.model_card_json) if v.model_card_json else {}
-            return JSONResponse({
-                "variant_id": v.variant_id,
-                "model_id": v.model_id,
-                "version": v.version,
-                "precision": v.precision,
-                "status": v.status,
-                "top1_accuracy": v.top1_accuracy,
-                "artifact": {
-                    "filename": v.artifact.filename if v.artifact else "",
-                    "storage_path": v.artifact.storage_path if v.artifact else "",
-                    "size_bytes": v.artifact.size_bytes if v.artifact else 0,
-                    "sha256": v.artifact.sha256 if v.artifact else "",
-                    "chunk_count": v.artifact.chunk_count if v.artifact else 0,
-                } if v.artifact else None,
-                "model_card": card,
-            })
+    # Route phải khai báo trước mount /app (Starlette khớp theo thứ tự)
+    @app.get(f"{CLIENT_PATH}/links.json", include_in_schema=False)
+    async def client_links() -> JSONResponse:
+        return JSONResponse({"https_port": settings.https_port})
 
-    @app.post("/admin-api/variants/{variant_id}/status")
-    async def admin_set_variant_status(variant_id: str, request: Request) -> JSONResponse:
-        data = await read_json(request)
-        new_status = data.get("status")
-        valid_statuses = {"draft", "validating", "ready", "disabled", "retired"}
-        if new_status not in valid_statuses:
-            raise bad_request(f"Trạng thái không hợp lệ. Chọn một trong: {valid_statuses}")
-        from server.db import ModelVariantRecord, get_session_factory
-        with get_session_factory()() as db_session:
-            v = db_session.get(ModelVariantRecord, variant_id)
-            if not v:
-                return _error_response("NOT_FOUND", f"Không tìm thấy variant {variant_id}", 404)
-            v.status = new_status
-            db_session.commit()
-            return JSONResponse({"status": "success", "variant_id": variant_id, "new_status": new_status})
+    @app.get(CLIENT_PATH, include_in_schema=False)
+    async def client_root() -> RedirectResponse:
+        return RedirectResponse(f"{CLIENT_PATH}/")
 
-    @app.post("/admin-api/models/upload")
-    async def admin_upload_model(request: Request) -> JSONResponse:
-        import base64
-        data = await read_json(request)
-        metadata = data.get("metadata", {})
-        filename = data.get("filename", "")
-        if "file_base64" in data:
-            model_bytes = base64.b64decode(data["file_base64"])
-        elif "file_path" in data:
-            src_path = Path(data["file_path"])
-            if not src_path.is_file():
-                raise bad_request(f"Không tìm thấy file nguồn tại {data['file_path']}")
-            model_bytes = src_path.read_bytes()
-            if not filename:
-                filename = src_path.name
-        else:
-            raise bad_request("Cần cung cấp 'file_path' hoặc 'file_base64'.")
+    # Link cũ /m/ (bản thử đầu tiên) vẫn dùng được
+    @app.get("/m", include_in_schema=False)
+    @app.get("/m/{rest:path}", include_in_schema=False)
+    async def legacy_mobile(rest: str = "") -> RedirectResponse:
+        return RedirectResponse(f"{CLIENT_PATH}/")
 
-        if not filename:
-            filename = f"{metadata.get('variant_id', 'model')}.onnx"
+    app.add_middleware(IsolationHeaders, prefix=f"{CLIENT_PATH}/")
+    app.mount(CLIENT_PATH, NoCacheStaticFiles(directory=WEBCLIENT_DIR, html=True), name="client")
 
-        from server.db import get_session_factory
-        from server.ingestion import IngestionError, ingest_model
-        try:
-            with get_session_factory()() as db_session:
-                res = ingest_model(
-                    model_bytes=model_bytes,
-                    filename=filename,
-                    metadata=metadata,
-                    settings=settings,
-                    session=db_session,
-                )
-                return JSONResponse(res)
-        except IngestionError as exc:
-            raise bad_request(exc.message) from exc
+    @app.get("/", include_in_schema=False)
+    async def root() -> RedirectResponse:
+        return RedirectResponse("/ui/")
 
     return app
 

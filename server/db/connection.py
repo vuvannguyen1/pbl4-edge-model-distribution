@@ -39,6 +39,8 @@ def init_engine(database_url: str | None = None, echo: bool = False) -> Engine:
     """Tạo engine kết nối CSDL."""
     global _engine, _SessionFactory
     url = database_url or get_default_database_url()
+    if _engine is not None:  # create_app gọi lại (test): đóng kết nối cũ, tránh khóa file SQLite
+        _engine.dispose()
 
     connect_args: dict[str, Any] = {}
     if url.startswith("sqlite"):

@@ -250,10 +250,21 @@ def apply_selector_feedback(
 
 
 def get_feedback_statistics(session: Session) -> dict[str, Any]:
-    """Thống kê tổng hợp phục vụ dashboard hoặc giám sát drift."""
+    """Thống kê tổng hợp phục vụ dashboard hoặc giám sát drift.
+
+    `user_feedback_count` = đánh giá thủ công (có `feedback_id`, từ /api/feedback)
+    + nhận xét chữ (từ /api/user-feedback); hai phần được tách riêng để đối chiếu với JSONL.
+    `average_latency_ms` là None khi chưa có số đo nào.
+    """
     perf_count = session.scalar(select(func.count(PerformanceFeedbackRecord.id))) or 0
-    avg_latency = session.scalar(select(func.avg(PerformanceFeedbackRecord.latency_ms_median))) or 0.0
+    avg_latency = session.scalar(select(func.avg(PerformanceFeedbackRecord.latency_ms_median)))
     user_count = session.scalar(select(func.count(UserFeedbackRecord.id))) or 0
+    manual_count = (
+        session.scalar(
+            select(func.count(UserFeedbackRecord.id)).where(UserFeedbackRecord.feedback_id.is_not(None))
+        )
+        or 0
+    )
     retrain_needed_count = (
         session.scalar(
             select(func.count(UserFeedbackRecord.id)).where(UserFeedbackRecord.flag_for_retrain.is_(True))
@@ -263,7 +274,11 @@ def get_feedback_statistics(session: Session) -> dict[str, Any]:
 
     return {
         "performance_feedback_count": perf_count,
-        "average_latency_ms": round(float(avg_latency), 2),
+        "average_latency_ms": (
+            round(float(avg_latency), 2) if perf_count and avg_latency is not None else None
+        ),
         "user_feedback_count": user_count,
+        "manual_feedback_count": manual_count,
+        "text_feedback_count": user_count - manual_count,
         "retrain_flagged_count": retrain_needed_count,
     }

@@ -29,6 +29,8 @@ VARIANT_FIELDS = {
     "input_dtype",
     "normalize",
 }
+# Phần mở rộng tuỳ chọn cho phát hiện vật thể (Model Card): null với model phân loại ảnh
+DETECTION_FIELDS = {"task", "map50_95", "gflops", "runtimes", "detection"}
 
 
 @pytest.fixture(scope="module")
@@ -45,10 +47,12 @@ def test_real_registry_has_ready_variants(registry: Registry) -> None:
 def test_every_ready_variant_maps_to_valid_variant_block(registry: Registry) -> None:
     for variant in registry.ready_variants():
         block = variant.protocol_variant.model_dump(mode="json")
-        assert set(block) == VARIANT_FIELDS, "đúng 13 trường, không thêm"
+        assert set(block) == VARIANT_FIELDS | DETECTION_FIELDS, "13 trường gốc + 5 trường mở rộng"
         assert schema_errors("Variant", block) == []
         assert block["id"] == variant.variant_id
         assert "storage_path" not in json.dumps(block)
+        assert block["task"] == "object_detection" and block["detection"]["format"]
+        assert block["map50_95"] is not None and block["gflops"] and block["runtimes"]
 
 
 @requires_models
@@ -120,7 +124,7 @@ def test_new_artifact_becomes_candidate_without_code_change(fake_store) -> None:
         cpu_arch="x86_64",
         ram_mb=16384,
         runtime="onnxruntime",
-        task="image_classification",
+        task="object_detection",
         bandwidth_kbps=None,
         deadline_s=60,
         free_storage_mb=None,

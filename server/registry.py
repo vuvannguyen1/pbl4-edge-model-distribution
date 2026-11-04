@@ -3,6 +3,8 @@
 Registry là danh mục động: server không biết trước có những variant nào.
 Chỉ bản ghi `status == "ready"`, đủ metadata cho khối `Variant` và có
 `storage_path` nằm bên trong Model Store mới được xem là có thể phân phối.
+Bản ghi `disabled` (tắt từ dashboard) không được chọn nữa; `get_servable` vẫn
+trả nó để server giao nốt miếng cho lượt đang tải dở (xem `locate_chunk`).
 File Registry được tự nạp lại khi thời điểm sửa đổi thay đổi, nên chạy lại
 `tools/build_registry.py` không cần khởi động lại server.
 """
@@ -11,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -24,6 +27,9 @@ from server.schemas import Variant
 logger = logging.getLogger("pbl4.server.registry")
 
 READY = "ready"
+DISABLED = "disabled"
+# trạng thái mà /api/chunks vẫn phục vụ (chọn variant thì chỉ dùng READY)
+SERVABLE = (READY, DISABLED)
 
 
 @dataclass(frozen=True)
@@ -46,15 +52,42 @@ class RegistryVariant:
     chunk_count: int
     chunks: tuple[ChunkInfo, ...]
     top1_accuracy: float
-    protocol_variant: Variant  # đúng 13 trường của $defs/Variant
+    protocol_variant: Variant  # 13 trường gốc của $defs/Variant + phần mở rộng tuỳ chọn
+    # Phát hiện vật thể (Model Card): None/rỗng với model phân loại ảnh
+    map50_95: float | None = None
+    gflops: float | None = None
+    runtimes: tuple[str, ...] = ()
+    minimum_ram_mb: int | None = None
 
     @property
     def file(self) -> str:
         return self.protocol_variant.file
 
+    @property
+    def quality(self) -> float:
+        """Điểm chất lượng để xếp hạng: mAP với phát hiện vật thể, top-1 với phân loại ảnh."""
+        return self.map50_95 if self.map50_95 is not None else self.top1_accuracy
+
+    @property
+    def quality_label(self) -> str:
+        return "mAP" if self.map50_95 is not None else "top-1"
+
+    def supports_runtime(self, runtime_family: str) -> bool:
+        """Không khai báo runtime thì coi như chạy được mọi nơi (Registry cũ)."""
+        return not self.runtimes or runtime_family in self.runtimes
+
 
 def to_protocol_variant(entry: dict[str, Any]) -> Variant:
-    """Ánh xạ bản ghi Registry sang khối Variant (đúng 13 trường, không thêm)."""
+    """Ánh xạ bản ghi Registry sang khối Variant (13 trường gốc + phần mở rộng tuỳ chọn).
+
+    Model phân loại phải có `top1_accuracy`; model phát hiện vật thể có `map50_95` thay thế
+    (top-1 không có nghĩa, ghi 0).
+    """
+    top1 = entry["top1_accuracy"]
+    if top1 is None:
+        if entry.get("map50_95") is None:
+            raise ValueError("thiếu top1_accuracy (hoặc map50_95 với phát hiện vật thể)")
+        top1 = 0.0
     return Variant(
         id=entry["variant_id"],
         file=entry["file"],
@@ -65,10 +98,15 @@ def to_protocol_variant(entry: dict[str, Any]) -> Variant:
         sha256=entry["sha256"],
         chunk_size=entry["chunk_size"],
         chunk_count=entry["chunk_count"],
-        top1_accuracy=entry["top1_accuracy"],
+        top1_accuracy=top1,
         input_shape=entry["input_shape"],
         input_dtype=entry["input_dtype"],
         normalize=entry["normalize"],
+        task=entry.get("task_id"),
+        map50_95=entry.get("map50_95"),
+        gflops=entry.get("gflops"),
+        runtimes=entry.get("supported_runtimes"),
+        detection=entry.get("detection"),
     )
 
 
@@ -112,6 +150,21 @@ def safe_storage_path(model_store: Path, storage_path: str) -> Path | None:
     return candidate
 
 
+def write_text_atomic(path: Path, text: str) -> None:
+    """Ghi ra file tạm cùng thư mục rồi `os.replace`: lỗi giữa chừng không làm hỏng file cũ."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        temp_path.write_text(text, encoding="utf-8")
+        os.replace(temp_path, path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def write_registry_atomic(registry_path: Path, data: dict[str, Any]) -> None:
+    write_text_atomic(registry_path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+
+
 class Registry:
     """Danh mục variant đọc từ file JSON, an toàn khi nhiều luồng cùng đọc."""
 
@@ -121,6 +174,7 @@ class Registry:
         self._lock = threading.Lock()
         self._mtime_ns: int | None = None
         self._ready: dict[str, RegistryVariant] = {}
+        self._servable: dict[str, RegistryVariant] = {}
         self._all_ids: set[str] = set()
         self.load()
 
@@ -134,10 +188,11 @@ class Registry:
         except (OSError, json.JSONDecodeError) as exc:
             logger.error("Không đọc được Registry %s: %s", self.registry_path, exc)
             with self._lock:
-                self._ready, self._all_ids, self._mtime_ns = {}, set(), None
+                self._ready, self._servable, self._all_ids, self._mtime_ns = {}, {}, set(), None
             return
 
         ready: dict[str, RegistryVariant] = {}
+        servable: dict[str, RegistryVariant] = {}
         all_ids: set[str] = set()
         for entry in raw.get("variants", []):
             variant_id = entry.get("variant_id")
@@ -146,7 +201,7 @@ class Registry:
                 continue
             all_ids.add(variant_id)
             status = entry.get("status")
-            if status != READY:
+            if status not in SERVABLE:
                 logger.info("Registry: %s ở trạng thái %s, không phân phối", variant_id, status)
                 continue
             try:
@@ -160,7 +215,7 @@ class Registry:
             if safe_storage_path(self.model_store, entry.get("storage_path", "")) is None:
                 logger.warning("Registry: %s có storage_path không an toàn, bỏ qua", variant_id)
                 continue
-            ready[variant_id] = RegistryVariant(
+            servable[variant_id] = RegistryVariant(
                 variant_id=variant_id,
                 task_id=entry["task_id"],
                 storage_path=entry["storage_path"],
@@ -168,12 +223,21 @@ class Registry:
                 sha256=entry["sha256"],
                 chunk_count=entry["chunk_count"],
                 chunks=chunks,
-                top1_accuracy=float(entry["top1_accuracy"]),
+                top1_accuracy=float(entry["top1_accuracy"] or 0.0),
                 protocol_variant=protocol_variant,
+                map50_95=entry.get("map50_95"),
+                gflops=entry.get("gflops"),
+                runtimes=tuple(entry.get("supported_runtimes") or ()),
+                minimum_ram_mb=entry.get("minimum_ram_mb"),
             )
+            if status == READY:
+                ready[variant_id] = servable[variant_id]
+            else:
+                logger.info("Registry: %s đã tắt, không chọn nữa (miếng vẫn tải được)", variant_id)
 
         with self._lock:
             self._ready = ready
+            self._servable = servable
             self._all_ids = all_ids
             self._mtime_ns = stat.st_mtime_ns
         logger.info(
@@ -204,6 +268,11 @@ class Registry:
     def get_ready(self, variant_id: str) -> RegistryVariant | None:
         with self._lock:
             return self._ready.get(variant_id)
+
+    def get_servable(self, variant_id: str) -> RegistryVariant | None:
+        """Variant ready hoặc disabled, đủ metadata; dùng để giao nốt miếng cho lượt đang tải dở."""
+        with self._lock:
+            return self._servable.get(variant_id)
 
     def file_path(self, variant: RegistryVariant) -> Path | None:
         return safe_storage_path(self.model_store, variant.storage_path)

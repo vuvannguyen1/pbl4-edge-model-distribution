@@ -63,7 +63,7 @@ def test_detect_without_image_loops_until_cancel(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
     cache = tmp_path / "cache"
-    install_real_model(cache, "mobilenetv2_int8")
+    install_real_model(cache, "yolox_nano")
     single = make_test_image(tmp_path / "le.jpg")
     folder = tmp_path / "anh"
     folder.mkdir()
@@ -106,6 +106,28 @@ def test_monitor_reports_only_state_changes() -> None:
     assert "client.detect" in lines[0]
     assert "kết nối lại" in lines[1]
     assert monitor.connected
+
+
+def test_monitor_heartbeat_only_when_connected_and_throttled() -> None:
+    beats: list[int] = []
+
+    def heartbeat() -> None:
+        beats.append(1)
+        raise RuntimeError("server trả lỗi")  # lỗi heartbeat không làm chết luồng theo dõi
+
+    monitor = ServerMonitor(
+        "http://10.0.0.1:8000", out=lambda _l: None, check=lambda: True, heartbeat=heartbeat
+    )
+    monitor.beat()
+    monitor.beat()  # chưa đủ heartbeat_every_s: không gọi lại
+    assert beats == [1]
+    monitor.heartbeat_every_s = 0
+    monitor.connected = False
+    monitor.beat()
+    assert beats == [1]
+    monitor.connected = True
+    monitor.beat()
+    assert beats == [1, 1]
 
 
 def test_monitor_calls_on_reconnect_and_survives_errors() -> None:

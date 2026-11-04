@@ -9,12 +9,13 @@ from __future__ import annotations
 import time
 from collections.abc import Iterable, Sequence
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import requests
 
 PROTOCOL_VERSION = "1.0"
-TASK = "image_classification"
+# Bài toán hiện tại của hệ thống (Registry chỉ còn model phát hiện vật thể)
+TASK = "object_detection"
 
 
 class ApiError(Exception):
@@ -58,8 +59,9 @@ def build_model_request(
     free_storage_mb: float | None,
     preferred_variant: str | None,
     have_variants: Iterable[str],
+    mode: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "device_id": device_id,
         "task": TASK,
         "bandwidth_kbps": round(bandwidth_kbps, 1) if bandwidth_kbps else None,
@@ -68,6 +70,9 @@ def build_model_request(
         "preferred_variant": preferred_variant,
         "have_variants": sorted(set(have_variants)),
     }
+    if mode is not None:  # trường tuỳ chọn: server lọc model theo tốc độ suy luận của máy
+        payload["mode"] = mode
+    return payload
 
 
 def build_have(
@@ -229,6 +234,14 @@ class ApiClient:
 
     def feedback(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._post("/api/feedback", payload)
+
+    def heartbeat(self, device_id: str, timeout_s: float = 2.0) -> bool:
+        """Báo server máy này còn chạy (dashboard tính là đang hoạt động). Không ném lỗi."""
+        url = f"{self.server_url}/admin-api/devices/{quote(device_id, safe='')}/heartbeat"
+        try:
+            return self.session.post(url, timeout=timeout_s).status_code == 200
+        except requests.RequestException:
+            return False
 
     def submit_feedback(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Gửi đánh giá thủ công (`build_manual_feedback`), cùng endpoint `/api/feedback`."""

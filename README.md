@@ -1,19 +1,59 @@
 # pbl4-edge-model-distribution
 
-Hệ thống phân phối model AI (ONNX) cho thiết bị edge theo băng thông, PBL4 Version 1.
+Hệ thống phân phối model **phát hiện vật thể** (ONNX) cho điện thoại, laptop và thiết bị edge
+theo cấu hình và băng thông, có P2P giữa các thiết bị cùng cấu hình. PBL4.
 
-- **Server** (Python FastAPI): đọc danh mục model động từ Registry, chọn phiên bản model
-  (MobileNetV2/ResNet-50, FP32/INT8) vừa hạn tải theo băng thông và dung lượng của thiết bị,
-  lập kế hoạch tải theo miếng 1 MiB, phục vụ miếng có giới hạn tốc độ, ghép P2P giữa các máy
-  cùng lớp và nhận feedback.
-- **Client agent** (Python CLI): đăng ký, đo băng thông, xin model, tải tối đa 4 miếng song
-  song có kiểm SHA-256 và fallback, chạy phân loại ảnh bằng ONNX Runtime (Top-5), gửi số đo
-  thực tế; đồng thời làm peer chia sẻ miếng cho máy khác. Model tải về nằm lại trên máy:
-  `python -m client.detect` mở hộp thoại chọn ảnh trên máy và nhận diện offline, không cần
-  server. Client báo trên terminal khi mất kết nối tới server.
+- **Server** (Python FastAPI): đọc danh mục 10 model CV từ Registry (YOLOX nano→x, SSD
+  MobileNet FP32/INT8, Faster R-CNN INT8, RetinaNet), chọn bản có mAP cao nhất mà thiết bị
+  tải kịp, đủ RAM, chạy được (trình duyệt hay Python) và đủ nhanh cho chế độ dùng (camera trực
+  tiếp hay ảnh chụp); lập kế hoạch tải theo miếng 1 MiB, ghép P2P giữa các máy cùng lớp, nhận
+  feedback và học tốc độ thật của từng lớp thiết bị.
+- **Giao diện client `/app`** (trình duyệt, không cài gì): mở link là tự đăng ký, xin model, tải
+  từng miếng (từ server và từ máy cùng lớp qua WebRTC) có kiểm SHA-256, lưu model trong trình
+  duyệt và **phát hiện vật thể bằng camera** (onnxruntime-web, chạy ngay trên máy).
+- **Client Python** (`client.agent`, `client.detect`): cho thiết bị không có trình duyệt; chạy
+  được cả 10 model trên ảnh, làm peer HTTP chia sẻ miếng cho máy khác, nhận diện offline.
+- **Dashboard** `/ui/`: link + mã QR cho client, thiết bị và P2P, Registry, quyết định chọn
+  model, truyền model, đánh giá.
 
 Hợp đồng giao thức: [docs/protocol.md](docs/protocol.md) và
 [docs/protocol.schema.json](docs/protocol.schema.json).
+
+## Bắt đầu nhanh: client chỉ cần mở link
+
+Trên máy server (một lần: `pip install -e .[dev]`, `python tools\download_models.py`,
+`python tools\download_assets.py`):
+
+```cmd
+python -m server.serve
+```
+
+Lệnh in ra link cho điện thoại/laptop cùng Wi-Fi/hotspot, ví dụ:
+
+```text
+ Link cho điện thoại (cùng Wi-Fi/hotspot với máy này):
+   https://192.168.137.1:8443/app/          camera trực tiếp (khuyên dùng)
+   http://192.168.137.1:8000/app/           chỉ chụp ảnh
+ Dashboard (có mã QR của link): http://192.168.137.1:8000/
+```
+
+- Người dùng mở link (hoặc quét mã QR ở trang Tổng quan của dashboard), bấm **Xin model**, rồi
+  **Bật camera**. Lần đầu mở bản HTTPS, trình duyệt báo chứng chỉ không tin cậy (chứng chỉ tự ký
+  của server): chọn *Nâng cao → Tiếp tục*.
+- Bật **Mobile Hotspot** của Windows trên máy server thì IP luôn là `192.168.137.1`, link cố định.
+- Điện thoại không mở được link: mở tường lửa (PowerShell chạy bằng quyền Administrator):
+  `New-NetFirewallRule -DisplayName "PBL4 server" -Direction Inbound -Protocol TCP -LocalPort 8000,8443 -Action Allow -Profile Any`
+- Trình duyệt chỉ cho mở camera liên tục trên HTTPS. Bản HTTP vẫn xin model và chụp từng ảnh.
+- Chứng chỉ tạo một lần trong `data\certs\` (cần `pip install cryptography`, hoặc openssl có sẵn
+  trong Git for Windows). Tham số: `--port 8000 --https-port 8443`, `--no-https`.
+
+Giao diện client có 3 tab:
+
+| Tab | Làm gì |
+|---|---|
+| Model | Chọn **Camera trực tiếp** (server chọn model ≥ 5 khung/giây trên máy này) hoặc **Ảnh chụp** (model chính xác hơn, ≤ 2,5 s/ảnh); xem các bước, lý do server chọn, lưới miếng S (server) / P (peer). Model lưu trong trình duyệt, lần sau mở link dùng ngay. Khi trang mở, máy cùng lớp tải P2P từ máy này |
+| Camera | Camera trực tiếp có khung + tên vật thể tiếng Việt, FPS; chụp/chọn ảnh; ngưỡng tin cậy; lọc theo loại vật thể; đổi camera trước/sau |
+| Đánh giá | Chấm điểm khung hình đã chụp, đúng/sai, vật thể thực tế, nhận xét (`POST /api/feedback`) |
 
 ## Chạy chương trình
 
@@ -30,17 +70,30 @@ python tools\download_models.py
 python tools\download_assets.py
 ```
 
-`download_models.py` tải và kiểm tra đủ 10 model CV. `build_registry.py` phải khớp với
-10 variant ready trong Registry đã commit. Máy chỉ chạy client thì chỉ cần thư mục
-`client/` và `samples/imagenet_synset.txt`, cài `pip install requests onnxruntime numpy pillow`.
+`download_models.py` tải và kiểm tra đủ 10 model CV. `download_assets.py` tải thêm
+onnxruntime-web vào `server/webclient/vendor/` để điện thoại không cần Internet (thiếu thì trang
+`/app` lấy từ CDN).
+
+Model Card của 10 model nằm trong `metadata/model_cards/` (cách tiền xử lý, giải mã đầu ra, mAP,
+GFLOPs, runtime, RAM). Sinh lại Model Card và Registry sau khi đổi model:
+
+```cmd
+python tools\curate_detection_registry.py
+```
+
+Script gọi `tools\build_registry.py`: băm từng miếng 1 MiB, mở model bằng ONNX Runtime và **chạy
+thử trên `samples\dog.jpg`** (phải thấy "dog") mới cho `ready`. Kết quả mong đợi `10 variant,
+10 ready`. Máy chỉ chạy client Python thì chỉ cần thư mục `client/`, cài
+`pip install requests onnxruntime numpy pillow`.
 
 ### 2. Server
 
 ```cmd
-uvicorn server.main:app --host 0.0.0.0 --port 8000
+python -m server.serve
 ```
 
-Server in `Server sẵn sàng ... 4 variant ready` là xong. Muốn giả lập mạng chậm (để thấy server
+(hoặc lệnh cũ `uvicorn server.main:app --host 0.0.0.0 --port 8000`, chỉ có HTTP.) Server in
+`Server sẵn sàng ... 10 variant ready` là xong. Muốn giả lập mạng chậm (để thấy server
 chọn model khác nhau và thấy lợi ích P2P), đặt giới hạn tốc độ trước khi chạy:
 
 ```cmd
@@ -59,7 +112,9 @@ python -m client.agent --server http://127.0.0.1:8000 --device-id laptopB --peer
 - Bỏ `--image` thì client mở **hộp thoại chọn ảnh** trên máy; hoặc truyền thẳng
   `--image samples\dog.jpg` (ảnh ở đâu cũng được).
 - Client chạy 7 bước: đăng ký, đo băng thông, xin model (server trả lý do chọn), tải từng miếng có
-  kiểm SHA-256, nhận diện ảnh (Top-5), gửi feedback.
+  kiểm SHA-256, phát hiện vật thể trên ảnh (bảng vật thể, độ tin cậy, hộp), gửi feedback.
+- `--mode photo` (mặc định): server chọn model chạy một ảnh trong ~2,5 s trên máy này; `--mode live`:
+  ~5 khung/giây; `--mode none`: không lọc theo tốc độ (như protocol 1.0, có thể nhận yolox_x 378 MB).
 - Model được **giữ lại trên máy** ở `data\client\<device_id>\<variant_id>\` (file `.onnx` và
   `variant.json` ghi kích thước, SHA-256, phiên bản, task, input, runtime và trạng thái
   `partial`/`complete`/`invalid`), kèm `data\client\<device_id>\active.json` ghi model đang dùng.
@@ -133,11 +188,60 @@ python -m client.feedback_cli --sync-pending --server http://127.0.0.1:8000
   (`client.agent` cũng tự gửi bù khi kết nối được server.) Mỗi đánh giá có `feedback_id` riêng nên
   gửi lại nhiều lần server cũng chỉ ghi một lần (`data\feedback\manual-feedback-YYYYMMDD.jsonl`).
 
-### 6. Tóm tắt
+### 6. Giao diện web
+
+Giao diện client `/app` (điện thoại, laptop) xem mục **Bắt đầu nhanh** ở đầu README. Các phần
+mở rộng giao thức cho trình duyệt (capabilities, mode, khối detection, P2P WebRTC) ở
+[docs/protocol.md](docs/protocol.md) mục 10: chỉ thêm trường tuỳ chọn, client 1.0 cũ không vỡ.
+Font, icon và thư viện mã QR đã nằm trong repo nên chạy được cả khi không có internet.
+
+**Dashboard server** (theo dõi toàn hệ thống). Bật server như mục 2 rồi mở trên trình duyệt:
+
+```text
+http://<IP máy server>:8000/      (tự chuyển tới /ui/)
+```
+
+| Màn hình | Bọc chức năng |
+|---|---|
+| Tổng quan | **Link + mã QR cho client**, số variant/thiết bị (trình duyệt / Python)/peer/request, tỉ lệ chunk peer–server, cảnh báo, cấu hình server, tốc độ suy luận đo được theo lớp thiết bị |
+| Thiết bị & P2P | Thiết bị đã đăng ký, lớp thiết bị, runtime và số luồng, lần cuối liên lạc, chia sẻ peer qua WebRTC (đang mở trang hay đã đóng) hoặc HTTP |
+| Registry model | `registry/model_registry.json` + Model Card: mAP, GFLOPs, chạy trên trình duyệt hay chỉ Python, cách giải mã đầu ra, chi tiết từng chunk; thêm model mới |
+| Quyết định chọn model | Lý do Selector chọn, từng bước lọc ứng viên; form **Xin model thử** (`POST /api/request`) |
+| Truyền model | Tiến độ từng lượt tải, lưới chunk theo nguồn server/peer, miếng lỗi |
+| Đánh giá model | Số đo agent, đánh giá người dùng (có form gửi `POST /api/feedback`), nhận xét văn bản |
+| Log sự kiện | Log server trong ngày, lọc theo mức và `request_id` |
+
+Dashboard tự cập nhật mỗi 2 giây (nút **Tạm dừng** trên cùng). Dữ liệu thiết bị và request nằm
+trong RAM của server nên khởi động lại server là mất; feedback và log thì còn (file trong `data/`).
+
+**Giao diện client** (thay cho `client.agent` + `client.feedback_cli` trên máy client):
+
+```cmd
+python -m client.web_ui --server http://<IP>:8000 --device-id laptopA --open
+```
+
+Mở `http://127.0.0.1:8080`: chọn/kéo thả ảnh hoặc ảnh mẫu, bấm **Nhận diện** (máy có model thì dùng
+ngay, chưa có thì xin server và tải, mất server thì chạy offline), xem tiến trình 7 bước và lưới
+miếng, Top-5, rồi gửi đánh giá (server tắt thì lưu chờ, có nút **Gửi bù**).
+
+| Tham số | Ý nghĩa |
+|---|---|
+| `--port 8081` | Đổi cổng giao diện (mặc định 8080) |
+| `--peer-port 9000` | Chia sẻ model đã tải cho máy khác (P2P), như `client.agent --serve` |
+| `--host 0.0.0.0` | Cho máy khác mở giao diện này (mặc định chỉ máy client) |
+| `--cache-dir`, `--runs` | Như `client.agent` |
+
+Trên Termux: chạy cùng lệnh rồi mở `http://127.0.0.1:8080` bằng trình duyệt của điện thoại.
+
+### 7. Tóm tắt
 
 | Tình huống | Lệnh |
 |---|---|
-| Bật server | `uvicorn server.main:app --host 0.0.0.0 --port 8000` |
+| Bật server + in link cho client | `python -m server.serve` |
+| Client điện thoại/laptop | Mở `https://<IP>:8443/app/` (hoặc quét QR ở dashboard) |
+| Xem dashboard | Mở `http://<IP>:8000/` |
+| Sinh lại Model Card + Registry | `python tools\curate_detection_registry.py` |
+| Giao diện web cho client | `python -m client.web_ui --server http://<IP>:8000 --device-id laptopB --open` |
 | Có server, tải model lần đầu | `python -m client.agent --server http://<IP>:8000 --device-id laptopB --peer-port 0` |
 | Có server, chia sẻ model và chạy liên tục | `python -m client.agent --server http://<IP>:8000 --device-id laptopA --peer-port 9000 --serve` |
 | Không có server, nhận diện ảnh | `python -m client.detect --device-id laptopB` |
@@ -305,9 +409,12 @@ Client sẽ tự đăng ký thông số thiết bị qua `/api/register`, xin mo
 
 | Thư mục | Nội dung |
 |---|---|
-| `server/` | FastAPI app, Registry, Selector, Planner, token bucket, feedback |
-| `client/` | Agent CLI, detect offline, chọn ảnh, theo dõi server, downloader, inference, peer |
-| `registry/`, `metadata/model_cards/`, `models/` | Registry sinh tự động, Model Card, file `.onnx` (không commit) |
+| `server/` | FastAPI app, Registry, Selector, Planner, token bucket, feedback; `admin_api.py` + `static/` là dashboard `/ui`; `webclient/` là giao diện client `/app`; `signaling.py` signaling WebRTC; `serve.py` lệnh bật server + HTTPS + in link |
+| `client/` | Agent CLI, detect offline, chọn ảnh, theo dõi server, downloader, inference (`detection.py`: giải mã 4 định dạng model phát hiện vật thể), peer HTTP; `web_ui.py` + `web/` là giao diện web cho client Python |
+| `metadata/model_cards/` | Model Card của 10 model CV (sinh bằng `tools/curate_detection_registry.py`) |
+| `client/web/shared/` | CSS, font, icon, JS dùng chung cho cả hai giao diện web (xem `docs/design-system.md`) |
+| `design-system/` | Kết quả gốc của skill ui-ux-pro-max |
+| `registry/`, `models/` | Registry sinh tự động, file `.onnx` (không commit) |
 | `tools/` | Tải model, sinh Registry, tải nhãn/ảnh, kiểm file mẫu giao thức |
 | `docs/` | Giao thức, schema, gói mẫu, hướng dẫn demo, báo cáo triển khai |
 | `tests/` | Bộ test `pytest` |

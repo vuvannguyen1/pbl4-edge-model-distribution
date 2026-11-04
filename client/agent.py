@@ -38,7 +38,7 @@ from client.device_info import (
 )
 from client.downloader import ChunkDownloader, DownloadError, DownloadResult, SwitchRequested
 from client.feedback import FeedbackQueue, save_last_detection
-from client.inference import Classifier, InferenceResult, format_top5, load_labels
+from client.inference import InferenceResult, create_runner, format_result, is_detection
 from client.model_cache import (  # noqa: F401 - verified_variants giữ đường import cũ
     ModelCache,
     ModelInvalid,
@@ -83,6 +83,9 @@ class AgentConfig:
     labels: Path = DEFAULT_LABELS
     probe_kb: int = 256
     refresh: bool = False  # True: hỏi server dù kho đã có model hợp lệ
+    # photo: server chọn model chạy một ảnh trong ~2,5 s trên máy này; live: ~5 khung/giây;
+    # None: không lọc theo tốc độ (như protocol 1.0)
+    mode: str | None = "photo"
 
     def resolved_cache_dir(self) -> Path:
         return self.cache_dir or (REPO_ROOT / "data" / "client" / self.device_id)
@@ -200,6 +203,7 @@ class Agent:
             free_storage_mb=self.free_storage_mb,
             preferred_variant=preferred,
             have_variants=local.keys(),
+            mode=cfg.mode,
         )
         bw_text = f"{payload['bandwidth_kbps']:,} kbps" if payload["bandwidth_kbps"] else "null"
         self.out(
@@ -222,7 +226,12 @@ class Agent:
         self.out(
             f"  Variant        : {variant['id']} ({variant['file']}, "
             f"{variant['size_bytes'] / BYTES_PER_MB:.2f} MB, {variant['chunk_count']} miếng, "
-            f"{variant['precision']}, top-1 {variant['top1_accuracy']})"
+            f"{variant['precision']}, "
+            + (
+                f"mAP {variant['map50_95'] * 100:.1f} %)"
+                if variant.get("map50_95") is not None
+                else f"top-1 {variant['top1_accuracy']})"
+            )
         )
         self.out(f"  Lý do          : {response['reason']}")
         self.out(
@@ -282,13 +291,13 @@ class Agent:
     ) -> InferenceResult:
         cfg = self.config
         self.section(step, f"Chạy suy luận ONNX Runtime ({variant['id']})")
-        if not cfg.labels.is_file():
+        detection = is_detection(variant)
+        if not detection and not cfg.labels.is_file():
             raise AgentError(f"Thiếu file nhãn {cfg.labels}. Chạy: python tools/download_assets.py")
         if cfg.image is None:
             raise AgentError("Chưa chọn ảnh để nhận diện.")
-        labels = load_labels(cfg.labels)
         try:
-            classifier = Classifier(model_path, variant, labels)
+            classifier = create_runner(model_path, variant, cfg.labels)
         except Exception as exc:  # file đúng hash nhưng runtime không mở được
             self.cache.mark_invalid(variant, f"ONNX Runtime không mở được: {exc}")
             raise AgentError(
@@ -310,12 +319,14 @@ class Agent:
         self.out(f"  Nạp model      : {result.load_ms:.1f} ms")
         self.out(
             f"  Latency trung vị: {result.latency_ms_median:.2f} ms "
-            f"({result.runs} lần, sau 3 lần warm-up)"
+            f"({result.runs} lần, sau vài lần warm-up)"
         )
         ram = f"{result.peak_ram_mb:.1f} MB" if result.peak_ram_mb is not None else "không đo được"
         self.out(f"  RAM đỉnh       : {ram}")
         self.out("")
-        for line in format_top5(result.top5):
+        if detection:
+            self.out(f"  Phát hiện {len(result.detections)} vật thể:")
+        for line in format_result(result, variant):
             self.out(line)
         return result
 
@@ -414,7 +425,10 @@ class Agent:
     def start_monitor(self) -> None:
         if self.monitor is None:
             self.monitor = ServerMonitor(
-                self.api.server_url, out=self.out, on_reconnect=self.sync_feedback
+                self.api.server_url,
+                out=self.out,
+                on_reconnect=self.sync_feedback,
+                heartbeat=lambda: self.api.heartbeat(self.config.device_id),
             )
             self.monitor.start()
 
@@ -632,6 +646,12 @@ def parse_args(argv: Sequence[str] | None = None) -> AgentConfig:
         choices=["android", "android_browser", "ios_browser", "windows", "linux"],
     )
     parser.add_argument(
+        "--mode",
+        default="photo",
+        choices=["photo", "live", "none"],
+        help="photo: model chạy một ảnh trong ~2,5 s; live: ~5 khung/giây; none: không lọc tốc độ",
+    )
+    parser.add_argument(
         "--follow-switch", action="store_true", help="tự xin lại khi feedback trả switch (1 lần)"
     )
     parser.add_argument(
@@ -671,6 +691,7 @@ def parse_args(argv: Sequence[str] | None = None) -> AgentConfig:
         serve=args.serve,
         labels=args.labels,
         refresh=args.refresh,
+        mode=None if args.mode == "none" else args.mode,
     )
 
 
@@ -691,24 +712,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     agent = Agent(config)
     try:
         result = agent.run()
-        top1 = result.inference.top5[0]
+        top = result.inference.top5
+        found = (
+            f"top-1 '{top[0].label}' {top[0].probability * 100:.1f} %"
+            if top
+            else "không thấy vật thể nào"
+        )
         print("")
         if result.offline:
-            print(
-                f"HOÀN TẤT (offline): {result.variant['id']} trong cache, "
-                f"top-1 '{top1.label}' {top1.probability * 100:.1f} %"
-            )
+            print(f"HOÀN TẤT (offline): {result.variant['id']} trong cache, {found}")
         elif result.source == "cache":
             print(
-                f"HOÀN TẤT: {result.variant['id']} có sẵn trên máy (không xin model), "
-                f"top-1 '{top1.label}' {top1.probability * 100:.1f} %"
+                f"HOÀN TẤT: {result.variant['id']} có sẵn trên máy (không xin model), {found}"
             )
         else:
             decision = result.feedback.get("action", "chưa gửi được (mất kết nối)")
             print(
                 f"HOÀN TẤT: {result.variant['id']} (request {result.request_id}), "
-                f"top-1 '{top1.label}' {top1.probability * 100:.1f} %, "
-                f"feedback {decision}"
+                f"{found}, feedback {decision}"
             )
         if config.serve:
             agent.serve_forever()

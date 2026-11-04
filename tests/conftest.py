@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import sys
+import tempfile
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 MODEL_STORE = REPO_ROOT / "models"
 REGISTRY_PATH = REPO_ROOT / "registry" / "model_registry.json"
 EXAMPLES_DIR = REPO_ROOT / "docs" / "examples"
+
+# `server.main` tạo `app = create_app()` ngay khi import (log + CSDL theo PBL4_DATA_DIR):
+# trỏ vào thư mục tạm để test không bao giờ ghi vào data/ thật của repo.
+_TEST_DATA_DIR = Path(tempfile.mkdtemp(prefix="pbl4-test-data-"))
+os.environ["PBL4_DATA_DIR"] = str(_TEST_DATA_DIR)
+os.environ.pop("PBL4_DATABASE_URL", None)
 
 # Cho phép `import validate_examples` (tools/protocol/ không phải package)
 sys.path.insert(0, str(REPO_ROOT / "tools" / "protocol"))
@@ -79,7 +86,7 @@ def fake_entry(variant_id: str, data: bytes, top1: float, storage_path: str) -> 
         "variant_id": variant_id,
         "model_id": variant_id.split("_")[0],
         "version": "1",
-        "task_id": "image_classification",
+        "task_id": "object_detection",
         "file": Path(storage_path).name,
         "storage_path": storage_path,
         "base_model": variant_id.split("_")[0],

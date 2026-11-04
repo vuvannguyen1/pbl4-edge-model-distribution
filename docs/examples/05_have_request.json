@@ -1,7 +1,7 @@
 {
   "device_id": "phoneB",
   "request_id": "r-0002",
-  "variant_id": "mobilenetv2_int8",
+  "variant_id": "yolox_nano",
   "chunks": [
     0,
     1,

@@ -124,8 +124,9 @@ def choose_local(
 ) -> tuple[dict[str, Any], Path, str]:
     """Chọn model trong kho cục bộ (kết quả của `ModelCache.valid_models`).
 
-    Thứ tự: `requested` (bắt buộc phải có) -> `active` -> top-1 cao nhất, bằng nhau
-    thì file nhỏ hơn. Trả (khối variant, file, lý do chọn). Không có model nào phù
+    Thứ tự: `requested` (bắt buộc phải có) -> `active` -> chất lượng cao nhất (mAP với
+    phát hiện vật thể, top-1 với phân loại), bằng nhau thì file nhỏ hơn. Trả (khối variant,
+    file, lý do chọn). Không có model nào phù
     hợp thì ném LookupError.
     """
     if requested is not None:
@@ -140,9 +141,16 @@ def choose_local(
         variant, path = found[active]
         return variant, path, "model đang dùng, ghi trong active.json"
     variant, path = min(
-        found.values(), key=lambda vp: (-vp[0]["top1_accuracy"], vp[0]["size_bytes"], vp[0]["id"])
+        found.values(), key=lambda vp: (-_quality(vp[0]), vp[0]["size_bytes"], vp[0]["id"])
     )
-    return variant, path, "top-1 cao nhất trong cache"
+    label = "mAP" if variant.get("map50_95") is not None else "top-1"
+    return variant, path, f"{label} cao nhất trong cache"
+
+
+def _quality(variant: dict[str, Any]) -> float:
+    if variant.get("map50_95") is not None:
+        return float(variant["map50_95"])
+    return float(variant.get("top1_accuracy") or 0.0)
 
 
 @dataclass(frozen=True)

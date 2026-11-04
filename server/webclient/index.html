@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#1e40af" />
+    <title>PBL4 · Phát hiện vật thể</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/ui/shared/css/tokens.css" />
+    <link rel="stylesheet" href="/ui/shared/css/fonts.css" />
+    <link rel="stylesheet" href="/ui/shared/css/base.css" />
+    <link rel="stylesheet" href="css/app.css" />
+    <script type="module" src="js/app.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Bỏ qua, tới nội dung chính</a>
+    <header class="m-top">
+      <div class="m-top-inner">
+        <p class="brand">
+          <svg class="icon icon-lg" aria-hidden="true"><use href="/ui/shared/icons/sprite.svg#i-camera"></use></svg>
+          <span>PBL4 Camera</span>
+          <span class="tag mono" id="device-id">…</span>
+        </p>
+        <div class="row" role="status" aria-atomic="true">
+          <span id="conn"><span class="badge is-neutral">Đang kết nối server…</span></span>
+          <span id="share"></span>
+        </div>
+      </div>
+      <nav class="m-tabs" aria-label="Màn hình">
+        <a class="m-tab" href="#model" data-tab="model">
+          <svg class="icon" aria-hidden="true"><use href="/ui/shared/icons/sprite.svg#i-cube"></use></svg>
+          Model
+        </a>
+        <a class="m-tab" href="#camera" data-tab="camera">
+          <svg class="icon" aria-hidden="true"><use href="/ui/shared/icons/sprite.svg#i-camera"></use></svg>
+          Camera
+        </a>
+        <a class="m-tab" href="#feedback" data-tab="feedback">
+          <svg class="icon" aria-hidden="true"><use href="/ui/shared/icons/sprite.svg#i-star"></use></svg>
+          Đánh giá
+        </a>
+      </nav>
+    </header>
+
+    <main id="main" class="m-main" tabindex="-1">
+      <!-- ============================================================ Model -->
+      <section class="stack" data-panel="model" aria-labelledby="request-title">
+        <section class="card" aria-labelledby="request-title">
+          <div class="card-header">
+            <div>
+              <h1 id="request-title">Xin model phát hiện vật thể</h1>
+              <p>Server chọn model vừa với mạng và cấu hình máy này, gửi từng miếng; máy kiểm tra rồi lưu lại để lần sau dùng ngay.</p>
+            </div>
+          </div>
+          <div class="card-body stack">
+            <div id="model-status"></div>
+
+            <fieldset class="field">
+              <legend>Dùng để</legend>
+              <div class="choice-row">
+                <label class="choice">
+                  <input type="radio" name="mode" value="live" checked />
+                  <span>
+                    <svg class="icon" aria-hidden="true"><use href="/ui/shared/icons/sprite.svg#i-camera"></use></svg>
+                    Camera trực tiếp
+                  </span>
+                </label>
+                <label class="choice">
+                  <input type="radio" name="mode" value="photo" />
+                  <span>
+                    <svg class="icon" aria-hidden="true"><use href="/ui/shared/icons/sprite.svg#i-image"></use></svg>
+                    Ảnh chụp
+                  </span>
+                </label>
+              </div>
+              <span class="hint" id="mode-hint">Ưu tiên tốc độ: server chọn model chạy được ít nhất 5 khung hình/giây trên máy này.</span>
+            </fieldset>
+
+            <details class="disclosure">
+              <summary>
+                <svg class="icon" aria-hidden="true"><use href="/ui/shared/icons/sprite.svg#i-caret-right"></use></svg>
+                Tuỳ chọn nâng cao
+              </summary>
+              <div class="stack section-gap">
+                <div class="field">
+                  <label for="preferred">Model muốn dùng</label>
+                  <select id="preferred" class="input" aria-describedby="preferred-hint">
+                    <option value="">Để server tự chọn theo cấu hình và băng thông</option>
+                  </select>
+                  <span class="hint" id="preferred-hint"></span>
+                </div>
+                <div class="field">
+                  <label for="deadline">Hạn tải (giây)</label>
+                  <input id="deadline" class="input" type="number" min="1" step="any" inputmode="decimal" value="60" />
+                  <span class="hint">Server chỉ chọn model tải xong trong thời gian này ở băng thông đo được.</span>
+                </div>
+                <label class="row">
+                  <input type="checkbox" id="refresh" />
+                  Hỏi server dù máy đã có model được chọn
+                </label>
+              </div>
+            </details>
+
+            <div class="form-actions">
+              <button class="btn btn-primary btn-lg" type="button" id="request-btn">
+                <svg class="icon" aria-hidden="true"><use href="/ui/shared/icons/sprite.svg#i-download-simple"></use></svg>
+                <span>Xin model</span>
+              </button>
+            </div>
+
+            <div id="progress" class="stack" hidden aria-live="polite">
+              <div id="steps"></div>
+              <div id="reason" class="small reason" hidden></div>
+              <div id="download-view" class="stack"></div>
+              <ul id="notes" class="notes small"></ul>
+            </div>
+            <div id="suggestion"></div>
+          </div>
+        </section>
+
+        <section class="card" aria-labelledby="device-title">
+          <div class="card-header"><h2 id="device-title">Máy này</h2></div>
+          <div class="card-body"><dl class="dl-grid" id="device-info"></dl></div>
+        </section>
+
+        <section class="card" aria-labelledby="local-title">
+          <div class="card-header">
+            <div>
+              <h2 id="local-title">Model đã lưu trên máy</h2>
+              <p>Khi trang mở, máy cùng loại có thể tải model này trực tiếp từ đây (P2P).</p>
+            </div>
+          </div>
+          <div class="card-body" id="local-list"></div>
+        </section>
+      </section>
+
+      <!-- ============================================================ Camera -->
+      <section class="stack" data-panel="camera" aria-labelledby="camera-title" hidden>
+        <h1 class="sr-only" id="camera-title">Phát hiện vật thể</h1>
+        <div id="detect-empty" class="card">
+          <div class="state">
+            <p class="state-title">
+              <svg class="icon" aria-hidden="true"><use href="/ui/shared/icons/sprite.svg#i-info"></use></svg>
+              Máy chưa có model
+            </p>
+            <p>Sang tab Model và bấm Xin model trước.</p>
+            <a class="btn btn-primary" href="#model">Tới tab Model</a>
+          </div>
+        </div>
+        <div id="https-hint" hidden></div>
+
+        <div id="detect-tools" class="stack" hidden>
+          <div class="stage" id="stage">
+            <video id="video" playsinline muted autoplay></video>
+            <canvas id="view" role="img" aria-label="Khung hình kèm hộp vật thể phát hiện được"></canvas>
+            <p class="stage-empty" id="stage-empty">Bật camera hoặc chụp ảnh để bắt đầu phát hiện vật thể.</p>
+            <p class="stage-stats mono" id="det-stats" aria-hidden="true"></p>
+          </div>
+
+          <div class="toolbar">
+            <button class="btn btn-primary" type="button" id="camera-btn">
+              <svg class="icon" aria-hidden="true"><use href="/ui/shared/icons/sprite.svg#i-camera"></use></svg>
+              <span>Bật camera</span>
+            </button>
+            <button class="btn btn-secondary" type="button" id="flip-btn" hidden>
+              <svg class="icon" aria-hidden="true"><use href="/ui/shared/icons/sprite.svg#i-arrow-clockwise"></use></svg>
+              <span>Đổi camera</span>
+            </button>
+            <input type="file" id="photo" accept="image/*" capture="environment" class="sr-only" />
+            <label for="photo" class="btn btn-secondary touch-only">
+              <svg class="icon" aria-hidden="true"><use href="/ui/shared/icons/sprite.svg#i-camera"></use></svg>
+              Chụp ảnh
+            </label>
+            <input type="file" id="pick" accept="image/*" class="sr-only" />
+            <label for="pick" class="btn btn-secondary">
+              <svg class="icon" aria-hidden="true"><use href="/ui/shared/icons/sprite.svg#i-image"></use></svg>
+              Chọn ảnh
+            </label>
+            <button class="btn btn-secondary" type="button" id="freeze-btn" disabled>
+              <svg class="icon" aria-hidden="true"><use href="/ui/shared/icons/sprite.svg#i-star"></use></svg>
+              <span>Đánh giá khung này</span>
+            </button>
+          </div>
+
+          <div class="card">
+            <div class="card-body stack">
+              <div class="controls">
+                <div class="field">
+                  <label for="threshold">Ngưỡng tin cậy: <span id="threshold-value" class="num"></span></label>
+                  <input id="threshold" type="range" min="0.1" max="0.9" step="0.05" value="0.4" />
+                </div>
+                <div class="field">
+                  <label for="only-class">Chỉ hiện</label>
+                  <select id="only-class" class="input">
+                    <option value="">Mọi vật thể</option>
+                  </select>
+                </div>
+              </div>
+              <p id="det-summary" aria-live="polite"></p>
+              <ul class="det-list" id="det-list"></ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================ Đánh giá -->
+      <section class="stack" data-panel="feedback" aria-labelledby="feedback-title" hidden>
+        <section class="card">
+          <div class="card-header">
+            <div>
+              <h1 id="feedback-title">Đánh giá kết quả</h1>
+              <p>Đánh giá khung hình đã chụp; server dùng để chọn model tốt hơn cho các máy cùng loại.</p>
+            </div>
+          </div>
+          <div class="card-body stack">
+            <div id="snap-empty" class="state">
+              <p class="state-title">
+                <svg class="icon" aria-hidden="true"><use href="/ui/shared/icons/sprite.svg#i-info"></use></svg>
+                Chưa có khung hình nào
+              </p>
+              <p>Ở tab Camera, bấm "Đánh giá khung này" hoặc chụp một ảnh.</p>
+            </div>
+            <figure class="snapshot" id="snap" hidden>
+              <canvas id="snapshot" role="img" aria-label="Khung hình đang đánh giá"></canvas>
+              <figcaption class="small" id="snap-summary"></figcaption>
+            </figure>
+
+            <form class="stack" id="feedback-form" novalidate hidden>
+              <fieldset class="field">
+                <legend>Điểm (1 kém – 5 tốt)</legend>
+                <div class="choice-row">
+                  <label class="choice"><input type="radio" name="rating" value="1" /><span>1</span></label>
+                  <label class="choice"><input type="radio" name="rating" value="2" /><span>2</span></label>
+                  <label class="choice"><input type="radio" name="rating" value="3" /><span>3</span></label>
+                  <label class="choice"><input type="radio" name="rating" value="4" /><span>4</span></label>
+                  <label class="choice"><input type="radio" name="rating" value="5" /><span>5</span></label>
+                </div>
+              </fieldset>
+              <fieldset class="field">
+                <legend>Model nhận đúng vật thể không?</legend>
+                <div class="choice-row">
+                  <label class="choice"><input type="radio" name="correct" value="yes" /><span>Đúng</span></label>
+                  <label class="choice"><input type="radio" name="correct" value="no" /><span>Sai / bỏ sót</span></label>
+                </div>
+              </fieldset>
+              <div class="field">
+                <label for="expected">Vật thể thực tế (nếu sai hoặc bỏ sót)</label>
+                <input id="expected" name="expected" class="input" maxlength="200" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="comment">Nhận xét</label>
+                <textarea id="comment" name="comment" class="input" rows="3" maxlength="1000"></textarea>
+              </div>
+              <div class="form-actions">
+                <button class="btn btn-primary" type="submit" id="feedback-btn">
+                  <svg class="icon" aria-hidden="true"><use href="/ui/shared/icons/sprite.svg#i-paper-plane-tilt"></use></svg>
+                  <span>Gửi đánh giá</span>
+                </button>
+              </div>
+              <div id="feedback-result" aria-live="polite"></div>
+            </form>
+          </div>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>

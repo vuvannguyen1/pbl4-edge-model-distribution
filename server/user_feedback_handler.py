@@ -23,12 +23,10 @@ from server.db.models import UserFeedbackRecord
 
 logger = logging.getLogger("server.user_feedback")
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-FEEDBACK_LOG_PATH = DATA_DIR / "user_feedbacks.jsonl"
 
-
-def record_user_feedback(payload: dict[str, Any]) -> dict[str, Any]:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+def record_user_feedback(payload: dict[str, Any], log_path: Path) -> dict[str, Any]:
+    """Ghi một nhận xét vào `log_path` (JSONL, thường là `Settings.user_feedback_log`) và CSDL."""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
 
     text = payload.get("feedback_text", "").strip()
     score = payload.get("score")
@@ -66,7 +64,7 @@ def record_user_feedback(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
     # 1. Ghi log JSONL (bảo toàn tương thích ngược)
-    with open(FEEDBACK_LOG_PATH, "a", encoding="utf-8") as f:
+    with open(log_path, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     # 2. Ghi vào CSDL SQL

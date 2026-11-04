@@ -6,6 +6,8 @@ Chạy từ thư mục gốc repo:
 - samples/imagenet_synset.txt: 1000 dòng dạng "n01440764 tench, Tinca tinca".
 - Ảnh demo (giấy phép tự do, Wikimedia Commons). Nếu không tải được ảnh,
   người dùng tự chép một ảnh .jpg vào samples/ (xem samples/README.md).
+- onnxruntime-web (server/webclient/vendor/, không commit): trang client /app lấy thư viện từ
+  server nên điện thoại không cần Internet. Thiếu thì trang tự lấy từ CDN.
 """
 
 from __future__ import annotations
@@ -31,6 +33,12 @@ DEMO_IMAGES: dict[str, str] = {
 }
 
 USER_AGENT = "pbl4-edge-model-distribution/1.0 (educational project)"
+
+# Phải khớp ORT_VERSION trong server/webclient/js/worker.js và detector.js
+ORT_WEB_VERSION = "1.20.1"
+ORT_WEB_URL = f"https://cdn.jsdelivr.net/npm/onnxruntime-web@{ORT_WEB_VERSION}/dist/"
+# Worker của trang /app nạp bản ES module (ort.wasm.min.mjs), WASM đa luồng dùng 2 file còn lại
+ORT_WEB_FILES = ("ort.wasm.min.mjs", "ort-wasm-simd-threaded.mjs", "ort-wasm-simd-threaded.wasm")
 
 
 def fetch(url: str, timeout: float = 30.0) -> bytes:
@@ -96,6 +104,26 @@ def download_images(target_dir: Path) -> int:
     return count
 
 
+def download_ort_web(target_dir: Path) -> bool:
+    version_file = target_dir / "VERSION"
+    have = version_file.read_text(encoding="utf-8").strip() if version_file.exists() else ""
+    if have == ORT_WEB_VERSION and all((target_dir / n).exists() for n in ORT_WEB_FILES):
+        print(f"[bỏ qua] onnxruntime-web {ORT_WEB_VERSION} đã có")
+        return True
+    target_dir.mkdir(parents=True, exist_ok=True)
+    for name in ORT_WEB_FILES:
+        print(f"[tải] onnxruntime-web {ORT_WEB_VERSION}/{name}")
+        try:
+            data = fetch(ORT_WEB_URL + name, timeout=120.0)
+        except requests.RequestException as exc:
+            print(f"  [cảnh báo] không tải được {name}: {exc} (trang điện thoại sẽ dùng CDN)")
+            return False
+        (target_dir / name).write_bytes(data)
+        print(f"  OK: {len(data):,} bytes")
+    version_file.write_text(ORT_WEB_VERSION + "\n", encoding="utf-8")
+    return True
+
+
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -106,6 +134,7 @@ def main() -> int:
     ok = download_synset(samples / "imagenet_synset.txt")
     if download_images(samples) == 0:
         print("[cảnh báo] chưa có ảnh demo, hãy tự chép một ảnh .jpg vào samples/")
+    download_ort_web(repo_root / "server" / "webclient" / "vendor" / "onnxruntime-web")
     return 0 if ok else 1
 
 

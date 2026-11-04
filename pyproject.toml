@@ -24,6 +24,15 @@ dev = [
     "jsonschema",
     "httpx",
 ]
+
+# huấn luyện/huấn luyện lại ML Selector (selector/train.py, selector/retrain.py)
+ml = [
+    "joblib",
+    "pandas",
+    "scikit-learn",
+    "lightgbm",
+]
+# huấn luyện PhoBERT (training/, notebooks/)
 training = [
     "accelerate",
     "datasets",
@@ -38,7 +47,12 @@ training = [
 ]
 
 [tool.setuptools]
-packages = ["server", "client"]
+packages = ["server", "server.db", "client", "selector"]
+
+[tool.setuptools.package-data]
+# giao diện web: HTML/CSS/JS/font/icon tĩnh, không cần build
+server = ["static/**/*", "webclient/**/*"]
+client = ["web/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

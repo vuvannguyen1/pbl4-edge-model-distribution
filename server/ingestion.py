@@ -9,7 +9,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import shutil
+import os
+import re
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -26,14 +28,49 @@ from server.db.models import (
     ModelVariantRecord,
     TaskRecord,
 )
+from server.registry import safe_storage_path, write_registry_atomic
 
 logger = logging.getLogger("pbl4.server.ingestion")
 
 
 class IngestionError(Exception):
-    def __init__(self, message: str) -> None:
+    """`code` là mã lỗi /admin-api: BAD_REQUEST (400) hoặc CONFLICT (409, trùng file)."""
+
+    def __init__(self, message: str, code: str = "BAD_REQUEST") -> None:
         super().__init__(message)
         self.message = message
+        self.code = code
+
+
+VARIANT_ID_RE = re.compile(r"^[a-z0-9_]{1,64}$")  # $defs/VariantId của protocol
+FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.onnx$")
+TASK_GROUP_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+PRECISIONS = ("fp32", "fp16", "int8")
+
+
+def safe_filename(filename: str) -> str:
+    """Chỉ nhận tên file trần (không thư mục, không '..'), thêm đuôi .onnx nếu thiếu."""
+    name = filename.strip()
+    if not name.lower().endswith(".onnx"):
+        name = f"{name}.onnx"
+    if "/" in name or "\\" in name or ".." in name or not FILENAME_RE.match(name):
+        raise IngestionError(
+            f"Tên file '{filename}' không hợp lệ: chỉ dùng chữ, số, '.', '_', '-', đuôi .onnx, "
+            "không chứa thư mục."
+        )
+    return name
+
+
+def _storage_owner(registry_path: Path, storage_path: str) -> str | None:
+    """variant_id trong Registry đang dùng `storage_path` (so không phân biệt hoa thường)."""
+    try:
+        raw = json.loads(registry_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    for entry in raw.get("variants", []):
+        if str(entry.get("storage_path", "")).lower() == storage_path.lower():
+            return entry.get("variant_id")
+    return None
 
 
 def hash_content_chunks(content: bytes) -> tuple[str, list[dict[str, Any]]]:
@@ -100,7 +137,7 @@ def ingest_model(
     """
     variant_id = str(metadata.get("variant_id", "")).strip()
     model_id = str(metadata.get("model_id", "")).strip()
-    task_id = str(metadata.get("task_id", "image_classification")).strip()
+    task_id = str(metadata.get("task_id", "object_detection")).strip()
     family = str(metadata.get("family", model_id)).strip()
     task_group = str(metadata.get("task_group", "CV")).strip()
     precision = str(metadata.get("precision", "fp32")).strip()
@@ -115,20 +152,95 @@ def ingest_model(
 
     if not variant_id or not model_id:
         raise IngestionError("Metadata phải có 'variant_id' và 'model_id'.")
-    if not filename.endswith(".onnx"):
-        filename = f"{filename}.onnx"
+    if not VARIANT_ID_RE.match(variant_id):
+        raise IngestionError(
+            f"variant_id '{variant_id}' không hợp lệ: chỉ chữ thường, số, '_' (tối đa 64 ký tự)."
+        )
+    if not TASK_GROUP_RE.match(task_group):
+        raise IngestionError(f"task_group '{task_group}' không hợp lệ.")
+    if precision not in PRECISIONS:
+        raise IngestionError(f"precision phải là một trong {', '.join(PRECISIONS)}.")
+    if not 0.0 <= top1_accuracy <= 1.0 or level < 0:
+        raise IngestionError("top1_accuracy phải trong [0, 1] và level ≥ 0.")
+    if not model_bytes:
+        raise IngestionError("File model rỗng.")
+    filename = safe_filename(filename)
 
-    # Thư mục đích
-    dest_dir = settings.model_store / task_group
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest_file = dest_dir / filename
+    # Thư mục đích: phải nằm trong Model Store
     storage_path = f"{task_group}/{filename}"
+    dest_file = safe_storage_path(settings.model_store, storage_path)
+    if dest_file is None:
+        raise IngestionError(f"Đường dẫn lưu {storage_path} không hợp lệ.")
+    owner = _storage_owner(settings.registry_path, storage_path)
+    if owner is not None and owner != variant_id:
+        raise IngestionError(
+            f"File {storage_path} đang là model của variant {owner}; đặt tên file khác.",
+            code="CONFLICT",
+        )
+    if dest_file.exists() and owner != variant_id:
+        raise IngestionError(
+            f"Model Store đã có file {storage_path}; đặt tên file khác để không ghi đè.",
+            code="CONFLICT",
+        )
 
-    # Lưu file
-    dest_file.write_bytes(model_bytes)
+    # Ghi ra file tạm, kiểm tra ONNX xong mới đưa vào chỗ thật; lỗi thì không để lại gì
+    dest_file.parent.mkdir(parents=True, exist_ok=True)
+    staged = dest_file.with_name(f".{filename}.{uuid.uuid4().hex}.upload")
+    try:
+        staged.write_bytes(model_bytes)
+        onnx_info = inspect_onnx_model(staged)
+        os.replace(staged, dest_file)
+    finally:
+        staged.unlink(missing_ok=True)
 
-    # Kiểm tra ONNX
-    onnx_info = inspect_onnx_model(dest_file)
+    try:
+        return _record_model(
+            model_bytes=model_bytes,
+            filename=filename,
+            storage_path=storage_path,
+            onnx_info=onnx_info,
+            metadata=metadata,
+            fields={
+                "variant_id": variant_id,
+                "model_id": model_id,
+                "task_id": task_id,
+                "family": family,
+                "precision": precision,
+                "level": level,
+                "top1_accuracy": top1_accuracy,
+                "version": version,
+                "task_group": task_group,
+            },
+            settings=settings,
+            session=session,
+        )
+    except Exception:
+        if owner is None:  # file vừa thêm, chưa thuộc ai: gỡ để Model Store khớp Registry
+            dest_file.unlink(missing_ok=True)
+        raise
+
+
+def _record_model(
+    *,
+    model_bytes: bytes,
+    filename: str,
+    storage_path: str,
+    onnx_info: dict[str, Any],
+    metadata: dict[str, Any],
+    fields: dict[str, Any],
+    settings: Settings,
+    session: Session,
+) -> dict[str, Any]:
+    """Băm, ghi CSDL rồi Registry cho một file đã kiểm định và đã nằm trong Model Store."""
+    variant_id, model_id, task_id = fields["variant_id"], fields["model_id"], fields["task_id"]
+    family, precision, level = fields["family"], fields["precision"], fields["level"]
+    top1_accuracy, version = fields["top1_accuracy"], fields["version"]
+    task_group = fields["task_group"]
+    source_provider = metadata.get("source_provider")
+    source_model_id = metadata.get("source_model_id")
+    source_revision = metadata.get("source_revision")
+    source_format = metadata.get("source_format")
+    distribution_format = metadata.get("distribution_format", "onnx")
 
     # Tính toán băm
     whole_sha256, chunks = hash_content_chunks(model_bytes)
@@ -257,6 +369,13 @@ def ingest_model(
             "source_format": source_format,
             "distribution_format": distribution_format,
             "top1_accuracy": top1_accuracy,
+            # Phát hiện vật thể: chất lượng, chi phí tính toán, runtime và cách giải mã đầu ra.
+            # Thiếu `detection` thì client đoán theo tiền tố variant_id (yolox_, ssd_mobilenet...).
+            "map50_95": metadata.get("map50_95"),
+            "gflops": metadata.get("gflops"),
+            "supported_runtimes": metadata.get("supported_runtimes"),
+            "minimum_ram_mb": metadata.get("minimum_ram_mb"),
+            "detection": metadata.get("detection"),
             "input_shape": metadata.get("input_shape", [1, 3, 224, 224]),
             "input_dtype": metadata.get("input_dtype", "float"),
             "normalize": metadata.get(
@@ -307,7 +426,4 @@ def _update_registry_json(registry_path: Path, entry: dict[str, Any]) -> None:
     data["variants"] = new_variants
     data["generated_at"] = datetime.now(timezone.utc).isoformat()
 
-    registry_path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = registry_path.with_suffix(".tmp")
-    temp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    shutil.move(temp_path, registry_path)
+    write_registry_atomic(registry_path, data)

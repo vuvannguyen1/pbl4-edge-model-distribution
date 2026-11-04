@@ -1,7 +1,9 @@
-"""Chạy model ONNX phân loại ảnh: tiền xử lý, Top-5, đo load/latency/RAM.
+"""Chạy model ONNX trên ảnh: phân loại (Top-5) hoặc phát hiện vật thể, đo load/latency/RAM.
 
-`Classifier` nạp model một lần rồi phân loại nhiều ảnh; `run_inference` là
-cách gọi gọn cho một ảnh.
+`create_runner` chọn theo variant: model phát hiện vật thể (có khối `detection`, xem
+client/detection.py) -> `DetectionRunner`; còn lại -> `Classifier`. Cả hai nạp model một lần,
+`classify(ảnh, runs)` trả cùng một `InferenceResult`: với phát hiện vật thể, `top5` là 5 vật thể
+tin cậy nhất (nhãn + độ tin cậy) và `detections` có đủ hộp.
 
 Tiền xử lý lấy từ khối `variant` (input_shape, input_dtype, normalize):
 RGB -> resize cạnh ngắn (bilinear, giữ tỉ lệ) -> cắt giữa -> /255 -> chuẩn hóa
@@ -14,7 +16,7 @@ import ctypes
 import statistics
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +42,7 @@ class InferenceResult:
     runs: int
     peak_ram_mb: float | None
     top5: list[Prediction]
+    detections: list[Any] = field(default_factory=list)  # client.detection.Detection
 
 
 def load_labels(path: Path) -> list[str]:
@@ -185,6 +188,61 @@ def run_inference(
     runs: int = 20,
 ) -> InferenceResult:
     return Classifier(model_path, variant, labels).classify(image_path, runs)
+
+
+class DetectionRunner:
+    """Model phát hiện vật thể với cùng giao diện `Classifier` (load_ms, classify)."""
+
+    def __init__(self, model_path: Path, variant: dict[str, Any]) -> None:
+        from client.detection import Detector
+
+        self.detector = Detector(model_path, variant)
+        self.load_ms = self.detector.load_ms
+        self.variant = variant
+
+    def classify(self, image_path: Path, runs: int = 5) -> InferenceResult:
+        result = self.detector.detect(image_path, runs)
+        top = [
+            Prediction(index=d.class_index, label=d.label, probability=d.score)
+            for d in result.detections[:5]
+        ]
+        return InferenceResult(
+            input_name=result.input_name,
+            load_ms=result.load_ms,
+            latency_ms_median=result.latency_ms_median,
+            runs=result.runs,
+            peak_ram_mb=result.peak_ram_mb,
+            top5=top,
+            detections=result.detections,
+        )
+
+
+def is_detection(variant: dict[str, Any]) -> bool:
+    from client.detection import detection_spec
+
+    return detection_spec(variant) is not None
+
+
+def create_runner(
+    model_path: Path, variant: dict[str, Any], labels_path: Path | None = None
+) -> Classifier | DetectionRunner:
+    """Model phát hiện vật thể không cần file nhãn (COCO có sẵn trong client.detection)."""
+    if is_detection(variant):
+        return DetectionRunner(model_path, variant)
+    if labels_path is None or not labels_path.is_file():
+        raise FileNotFoundError(
+            f"Thiếu file nhãn {labels_path}. Chạy: python tools/download_assets.py"
+        )
+    return Classifier(model_path, variant, load_labels(labels_path))
+
+
+def format_result(result: InferenceResult, variant: dict[str, Any]) -> list[str]:
+    """Bảng vật thể (phát hiện vật thể) hoặc Top-5 (phân loại) để in ra console."""
+    if is_detection(variant):
+        from client.detection import format_detections
+
+        return format_detections(result.detections)
+    return format_top5(result.top5)
 
 
 def format_top5(top5: list[Prediction]) -> list[str]:

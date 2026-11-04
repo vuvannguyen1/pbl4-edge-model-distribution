@@ -1,0 +1,109 @@
+/* Design tokens dùng chung cho dashboard server và giao diện client.
+   Nguồn và lý do từng giá trị: docs/design-system.md. Component chỉ dùng var(--...). */
+
+:root {
+  color-scheme: light;
+
+  /* ---- Màu nền tảng */
+  --color-primary: #1e40af;
+  --color-primary-hover: #1e3a8a;
+  --color-on-primary: #ffffff;
+  --color-secondary: #3b82f6;
+  --color-accent: #d97706;
+  --color-background: #f8fafc;
+  --color-card: #ffffff;
+  --color-text: #0f172a;
+  --color-heading: #1e3a8a;
+  --color-muted: #e9eef6;
+  --color-muted-text: #475569;
+  --color-border: #cbd5e1;
+  --color-border-strong: #64748b;
+  --color-ring: #1e40af;
+  --color-destructive: #dc2626;
+  --color-on-destructive: #ffffff;
+  --color-overlay: rgba(15, 23, 42, 0.5);
+
+  /* ---- Màu trạng thái: luôn đi kèm icon + chữ */
+  --color-success: #166534;
+  --color-success-bg: #dcfce7;
+  --color-info: #1d4ed8;
+  --color-info-bg: #dbeafe;
+  --color-warning: #92400e;
+  --color-warning-bg: #fef3c7;
+  --color-danger: #b91c1c;
+  --color-danger-bg: #fee2e2;
+  --color-neutral: #475569;
+  --color-neutral-bg: #f1f5f9;
+
+  /* ---- Nguồn chunk: peer luôn kèm sọc chéo */
+  --color-source-server: #1d4ed8;
+  --color-source-peer: #c2410c;
+  --color-chunk-pending: #64748b;
+  --color-chunk-bad: #b91c1c;
+
+  /* ---- Chữ */
+  --font-sans: "Fira Sans", "Segoe UI", Roboto, Arial, sans-serif;
+  --font-mono: "JetBrains Mono", Consolas, "Cascadia Mono", monospace;
+  --text-xs: 0.8125rem; /* 13px */
+  --text-sm: 0.875rem; /* 14px */
+  --text-base: 1rem; /* 16px */
+  --text-lg: 1.125rem; /* 18px */
+  --text-xl: 1.375rem; /* 22px */
+  --text-2xl: 1.75rem; /* 28px */
+  --text-kpi: 2.125rem; /* 34px */
+  --leading-body: 1.5;
+  --leading-heading: 1.25;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* ---- Khoảng cách (density 8/10) */
+  --space-xs: 0.125rem;
+  --space-sm: 0.25rem;
+  --space-md: 0.5rem;
+  --space-lg: 0.75rem;
+  --space-xl: 1rem;
+  --space-2xl: 1.5rem;
+  --space-3xl: 2rem;
+  --space-4xl: 3rem;
+
+  /* ---- Bo góc, bóng, viền focus */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-full: 9999px;
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-lg: 0 10px 15px rgba(15, 23, 42, 0.12);
+  --focus-ring: 0 0 0 2px var(--color-card), 0 0 0 5px var(--color-ring);
+
+  /* ---- Bố cục */
+  --sidebar-width: 240px;
+  --header-height: 56px;
+  --content-max: 1440px;
+  --content-max-client: 960px;
+  --control-height: 40px;
+  --control-height-touch: 44px;
+  --row-height: 40px;
+  --icon-size: 20px;
+  --icon-size-lg: 24px;
+  --z-header: 10;
+  --z-dropdown: 20;
+  --z-banner: 30;
+  --z-dialog: 40;
+  --z-toast: 50;
+
+  /* ---- Chuyển động */
+  --duration-fast: 150ms;
+  --duration-base: 200ms;
+  --duration-slow: 300ms;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-base: 0ms;
+    --duration-slow: 0ms;
+  }
+}

@@ -24,6 +24,8 @@ from server.feedback import (
 from server.planner import PeerSource, build_plan, format_ranges, summarize_plan
 from server.registry import Registry, RegistryVariant
 from server.schemas import (
+    AnnounceRequest,
+    AnnounceResponse,
     FeedbackRequest,
     FeedbackResponse,
     HaveRequest,
@@ -46,9 +48,33 @@ from server.selector import (
     fmt_num,
     no_fit_message,
 )
+from server.signaling import SignalHub
 from server.state import DownloadRequest, StateStore, url_origin
 
 logger = logging.getLogger("pbl4.server")
+
+# ---- Ngân sách suy luận theo chế độ dùng (phát hiện vật thể)
+DEFAULT_LIVE_FPS = 5.0  # camera trực tiếp: tối thiểu 5 khung/giây -> 200 ms/khung
+PHOTO_BUDGET_MS = 2500.0  # ảnh chụp: chờ tối đa 2,5 s
+# Ngưỡng feedback đề xuất đổi model: vượt ngân sách quá 50 %
+SLO_OVER_BUDGET = 1.5
+# Tốc độ ước lượng (ms cho mỗi GFLOP) khi lớp thiết bị chưa có số đo thật.
+# Đo trên Chrome (onnxruntime-web WASM 1 luồng) và onnxruntime CPU của laptop thử nghiệm.
+DEFAULT_MS_PER_GFLOP = {
+    ("onnxruntime-web", True): 140.0,  # trình duyệt điện thoại
+    ("onnxruntime-web", False): 70.0,  # trình duyệt laptop/PC
+    ("onnxruntime", True): 40.0,  # client Python trên Android (Termux)
+    ("onnxruntime", False): 12.0,  # client Python trên laptop/PC
+}
+MAX_THREAD_SPEEDUP = 4  # WASM đa luồng: mỗi luồng thêm nhanh ~50 %, tính tối đa 4 luồng
+
+
+def budget_for(mode: str | None, target_fps: float | None) -> float | None:
+    if mode == "live":
+        return 1000.0 / (target_fps or DEFAULT_LIVE_FPS)
+    if mode == "photo":
+        return PHOTO_BUDGET_MS
+    return None
 
 
 @dataclass(frozen=True)
@@ -79,6 +105,7 @@ class DistributionService:
         self.manual_feedback_store = manual_feedback_store or ManualFeedbackStore(
             settings.feedback_dir
         )
+        self.signals = SignalHub()
 
     # ------------------------------------------------------------ đăng ký
 
@@ -92,14 +119,16 @@ class DistributionService:
                 runtime=req.runtime,
                 peer_port=req.peer_port,
                 ip=ip,
+                capabilities=req.capabilities.model_dump() if req.capabilities else None,
             )
         except ValueError as exc:
             raise bad_request(str(exc)) from exc
-        if device.peer_origin is not None:
-            # máy khởi động lại thì cho nó cơ hội làm peer lần nữa
-            self.state.unban_origin(device.peer_origin)
+        for origin in (device.peer_origin, device.webrtc_origin):
+            if origin is not None:
+                # máy khởi động lại thì cho nó cơ hội làm peer lần nữa
+                self.state.unban_origin(origin)
         logger.info(
-            "%s thiết bị %s: lớp %s, ip %s, peer_port %s, %s, RAM %d MB, %s",
+            "%s thiết bị %s: lớp %s, ip %s, peer_port %s, %s, RAM %d MB, %s%s",
             "Đăng ký lại" if existed else "Đăng ký",
             device.device_id,
             device.device_class,
@@ -108,6 +137,7 @@ class DistributionService:
             device.cpu_arch,
             device.ram_mb,
             device.runtime,
+            f", {device.threads} luồng, P2P {device.p2p_transport}" if device.capabilities else "",
         )
         try:
             from server.db import get_session_factory, record_device as db_record_device
@@ -146,12 +176,23 @@ class DistributionService:
             return requested
         return self.settings.rate_limit_kbps or None
 
-    def request_model(self, req: ModelRequest, base_url: str) -> ModelResponse:
+    def request_model(
+        self, req: ModelRequest, base_url: str, source: str = "client"
+    ) -> ModelResponse:
+        """`source="web"`: lượt "xin model thử" từ dashboard (chỉ lập plan, không tải)."""
         device = self._device(req.device_id)
+        self.devices.touch(device.device_id)
         self.registry.refresh_if_changed()
-        if req.task not in {variant.task_id for variant in self.registry.ready_variants()}:
-            raise bad_request(f"Tác vụ '{req.task}' chưa có model ready trong catalog.")
+        ready_tasks = {variant.task_id for variant in self.registry.ready_variants()}
+        # Registry trống: để Selector báo NO_VARIANT_FITS "chưa có model nào sẵn sàng"
+        if ready_tasks and req.task not in ready_tasks:
+            raise bad_request(
+                f"Tác vụ '{req.task}' chưa có model ready trong catalog "
+                f"(đang có: {', '.join(sorted(ready_tasks))})."
+            )
         bandwidth = self.effective_bandwidth(req.bandwidth_kbps)
+        budget = budget_for(req.mode, req.target_fps)
+        ms_per_gflop, speed_source = self.device_speed(device) if budget else (None, "")
         context = SelectionContext(
             device_id=device.device_id,
             device_class=device.device_class,
@@ -164,6 +205,11 @@ class DistributionService:
             deadline_s=req.deadline_s,
             free_storage_mb=req.free_storage_mb,
             class_preferred_variant=self.state.class_variant(device.device_class),
+            runtime_family=device.runtime_family if req.task == "object_detection" else None,
+            mode=req.mode,
+            budget_ms=budget,
+            ms_per_gflop=ms_per_gflop,
+            speed_source=speed_source,
         )
 
         if req.preferred_variant is not None:
@@ -208,11 +254,20 @@ class DistributionService:
             reason=reason,
             plan=plan,
             complete=already_have,
+            source=source,
+            requested_bandwidth_kbps=req.bandwidth_kbps,
+            bandwidth_kbps=bandwidth,
+            deadline_s=req.deadline_s,
+            estimated_download_s=estimate,
+            decision_log=decision_log,
+            mode=req.mode,
+            budget_ms=budget,
+            runtime_family=device.runtime_family,
         )
         rid = record.request_id
         logger.info(
             "[%s] Xin model: thiết bị %s (lớp %s, ip %s), task %s, băng thông %s "
-            "(request: %s), hạn %s s, trống %s MB, preferred %s, have %s",
+            "(request: %s), hạn %s s, trống %s MB, preferred %s, have %s, chế độ %s",
             rid,
             device.device_id,
             device.device_class,
@@ -224,6 +279,7 @@ class DistributionService:
             req.free_storage_mb,
             req.preferred_variant,
             req.have_variants,
+            req.mode or "không khai báo",
         )
         for line in decision_log:
             logger.info("[%s] %s", rid, line)
@@ -296,7 +352,13 @@ class DistributionService:
         ]
         log += [f"Loại {r.variant_id}: {r.reason}" for r in rejections]
         if not candidates:
-            message = no_fit_message(context, rejections)
+            if ready:
+                message = no_fit_message(context, rejections)
+            else:
+                message = (
+                    "Server chưa có model nào sẵn sàng phân phối: Registry trống, không đọc được "
+                    "hoặc mọi bản đều đã tắt. Kiểm tra trang Registry model trên dashboard."
+                )
             rid = self.state.reserve_request_id()
             for line in log:
                 logger.info("[%s] %s", rid, line)
@@ -315,10 +377,26 @@ class DistributionService:
         log += [f"Không chọn {r.variant_id}: {r.reason}" for r in result.rejected]
         return variant, reason, result.selector_version, log
 
+    def device_speed(self, device: Device) -> tuple[float, str]:
+        """ms/GFLOP của thiết bị: số đo thật của lớp nếu có, ngược lại ước lượng theo runtime."""
+        measured = self.state.class_speed(device.device_class)
+        if measured is not None:
+            return measured, "đo thực tế"
+        base = DEFAULT_MS_PER_GFLOP[(device.runtime_family, device.is_mobile)]
+        threads = min(device.threads, MAX_THREAD_SPEEDUP)
+        return base / (1 + 0.5 * (threads - 1)), "ước lượng"
+
     def _find_peers(self, requester: Device, variant_id: str) -> list[PeerSource]:
-        """Peer hợp lệ: khác thiết bị, cùng lớp, có peer_port, đã complete, chưa bị báo sai."""
+        """Peer hợp lệ: khác thiết bị, cùng lớp, đã complete, chưa bị báo sai, và cùng cách P2P.
+
+        - Client Python (peer_port): peer HTTP `http://<ip>:<peer_port>`.
+        - Trình duyệt (capabilities.p2p = webrtc): peer `webrtc://<device_id>` đang mở trang
+          (long-poll /api/signal trong vòng 12 s). Trình duyệt không gọi được peer HTTP và
+          client Python không nói WebRTC, nên hai loại không bao giờ ghép với nhau.
+        """
         if not self.settings.peer_enabled:
             return []
+        wants_webrtc = requester.p2p_transport == "webrtc"
         peers: list[PeerSource] = []
         for device_id in self.state.devices_with_complete(variant_id):
             if device_id == requester.device_id:
@@ -326,17 +404,54 @@ class DistributionService:
             device = self.devices.get(device_id)
             if device is None or device.device_class != requester.device_class:
                 continue
-            origin = device.peer_origin
-            if origin is None or origin == requester.peer_origin or self.state.is_banned(origin):
+            if wants_webrtc:
+                origin = device.webrtc_origin
+                if origin is None or not self.signals.is_online(device_id):
+                    continue
+            else:
+                origin = device.peer_origin
+                if origin is None or origin == requester.peer_origin:
+                    continue
+            if self.state.is_banned(origin):
                 continue
             peers.append(PeerSource(device_id=device_id, origin=origin))
         return peers
+
+    # ------------------------------------------------------------ khai báo model có sẵn
+
+    def announce(self, req: AnnounceRequest) -> AnnounceResponse:
+        """Thiết bị mở lại trang với model trong kho: ghi nhận để làm peer cho máy cùng lớp."""
+        device = self._device(req.device_id)
+        self.devices.touch(device.device_id)
+        accepted: list[str] = []
+        rejected: list[str] = []
+        for held in req.variants:
+            variant = self.registry.get_servable(held.variant_id)
+            if variant is not None and variant.sha256 == held.sha256:
+                self.state.declare_complete(device.device_id, held.variant_id)
+                accepted.append(held.variant_id)
+            else:
+                rejected.append(held.variant_id)
+        if accepted or rejected:
+            logger.info(
+                "%s khai báo đã có %s%s",
+                device.device_id,
+                ", ".join(accepted) or "không model nào hợp lệ",
+                f"; bỏ qua {', '.join(rejected)} (không có trong Registry hoặc sai SHA-256)"
+                if rejected
+                else "",
+            )
+        return AnnounceResponse(accepted=accepted, rejected=rejected)
 
     # ------------------------------------------------------------ chunk
 
     def locate_chunk(self, variant_id: str, index: int) -> ChunkLocation:
         self.registry.refresh_if_changed()
         variant = self.registry.get_ready(variant_id)
+        if variant is None and self.state.has_unfinished(variant_id):
+            # variant vừa bị tắt (disabled): vẫn giao miếng cho lượt đang tải dở, không cắt
+            # giữa chừng; lượt xin model mới thì Selector không chọn nó nữa
+            variant = self.registry.get_servable(variant_id)
         if variant is None:
             raise unknown_variant(variant_id)
         if index < 0 or index >= variant.chunk_count:
@@ -404,7 +519,13 @@ class DistributionService:
                     "[%s] Ngừng giao peer %s cho các plan sau", rid, url_origin(item.url)
                 )
 
-        have_count, total = self.state.add_chunks(rid, req.chunks)
+        self.devices.touch(req.device_id)
+        have_count, total = self.state.add_chunks(
+            rid,
+            req.chunks,
+            bad_chunks=[b.index for b in req.bad_chunks],
+            server_bandwidth_kbps=req.bandwidth_kbps,
+        )
         bandwidth = f"{fmt_num(req.bandwidth_kbps)} kbps" if req.bandwidth_kbps else "null"
         logger.info(
             "[%s] Tiến độ %s: +%d miếng %s, đã có %d/%d, băng thông server %s",
@@ -437,14 +558,39 @@ class DistributionService:
     def feedback(self, req: FeedbackRequest) -> FeedbackResponse:
         record = self._request_for(req.device_id, req.request_id, req.variant_id)
         device = self._device(req.device_id)
+        self.devices.touch(device.device_id)
         rid = record.request_id
+        current = self.registry.get_servable(req.variant_id)
+        if current is not None and current.gflops and req.latency_ms_median > 0:
+            self.state.record_speed(device.device_class, req.latency_ms_median / current.gflops)
+        self.state.set_metrics(
+            rid,
+            {
+                "latency_ms_median": req.latency_ms_median,
+                "load_ms": req.load_ms,
+                "download_ms": req.download_ms,
+                "chunks_from_peer": req.chunks_from_peer,
+                "chunks_from_server": req.chunks_from_server,
+                "fps": req.fps,
+                "detections": req.detections,
+                "top1_label": req.top1_label,
+            },
+        )
+        # Lượt xin có mode: ngưỡng đổi model theo ngân sách của mode, và được đề xuất nâng cấp
+        slo = (
+            record.budget_ms * SLO_OVER_BUDGET if record.budget_ms else self.settings.latency_slo_ms
+        )
         decision = decide(
             variant_id=req.variant_id,
             latency_ms_median=req.latency_ms_median,
             device_class=device.device_class,
-            current=self.registry.get_ready(req.variant_id),
+            current=current,
             ready_variants=self.registry.ready_variants(),
-            latency_slo_ms=self.settings.latency_slo_ms,
+            latency_slo_ms=slo,
+            runtime_family=record.runtime_family if record.mode else None,
+            upgrade_budget_ms=record.budget_ms,
+            bandwidth_kbps=record.bandwidth_kbps,
+            deadline_s=record.deadline_s,
         )
         if decision.action == "switch" and decision.new_variant_id is not None:
             self.state.remember_class_variant(device.device_class, decision.new_variant_id)
@@ -501,7 +647,7 @@ class DistributionService:
                     reason=decision.reason,
                 )
         except Exception as exc:
-            logger.debug("[%s] Không thể lưu feedback vào CSDL: %s", rid, exc)
+            logger.warning("[%s] Không thể lưu feedback vào CSDL: %s", rid, exc)
         return FeedbackResponse(
             action=decision.action,
             new_variant_id=decision.new_variant_id,
@@ -514,6 +660,7 @@ class DistributionService:
         (client có thể gửi bù sau khi server khởi động lại). Trùng feedback_id thì không ghi.
         """
         device = self.devices.get(req.device_id)
+        self.devices.touch(req.device_id)
         now = datetime.now(timezone.utc)
         received_at = now.isoformat(timespec="milliseconds")
 
@@ -559,6 +706,8 @@ class DistributionService:
                 evaluation.reason,
                 path.name if path else "",
             )
+            if req.comment:
+                self._classify_comment(req)
         try:
             from server.db import get_session_factory, record_user_feedback as db_record_user
             with get_session_factory()() as db_session:
@@ -577,10 +726,33 @@ class DistributionService:
                     actual_label=req.expected_label,
                 )
         except Exception as exc:
-            logger.debug("[%s] Không thể lưu manual feedback vào CSDL: %s", req.feedback_id, exc)
+            logger.warning("[%s] Không thể lưu manual feedback vào CSDL: %s", req.feedback_id, exc)
         return ManualFeedbackResponse(
             feedback_id=req.feedback_id,
             status="duplicate" if duplicate else "accepted",
             received_at=entry["received_at"],
             evaluation=evaluation,
         )
+
+    def _classify_comment(self, req: ManualFeedbackRequest) -> None:
+        """Nhận xét đi kèm đánh giá được chấm như một bản /api/user-feedback.
+
+        Chỉ gọi cho feedback_id mới, nên gửi bù nhiều lần vẫn chấm một lần. Không truyền
+        feedback_id: dòng CSDL có feedback_id được tính là đánh giá thủ công (xem
+        get_feedback_statistics), dòng này phải được tính là nhận xét chữ để khớp JSONL.
+        Lỗi chỉ ghi log, không làm hỏng đánh giá chính đã lưu.
+        """
+        from server.user_feedback_handler import record_user_feedback
+
+        try:
+            record_user_feedback(
+                {
+                    "device_id": req.device_id,
+                    "distributed_variant": req.variant_id,
+                    "feedback_text": req.comment,
+                    "request_id": req.request_id,
+                },
+                self.settings.user_feedback_log,
+            )
+        except Exception as exc:
+            logger.warning("[%s] Không chấm được nhận xét: %s", req.feedback_id, exc)

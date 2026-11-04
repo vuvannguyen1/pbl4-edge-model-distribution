@@ -1,0 +1,279 @@
+/* Giao diện client: một cột, dùng tốt trên trình duyệt điện thoại (Termux). */
+
+.client-top {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-header);
+  background: var(--color-card);
+  border-bottom: 1px solid var(--color-border);
+  box-shadow: var(--shadow-sm);
+}
+
+.client-top-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md) var(--space-xl);
+  max-width: var(--content-max-client);
+  margin: 0 auto;
+  padding: var(--space-lg) var(--space-xl);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-md);
+  color: var(--color-heading);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+}
+
+.client-main {
+  max-width: var(--content-max-client);
+  margin: 0 auto;
+  padding: var(--space-xl);
+}
+
+.client-main:focus,
+.client-main:focus-visible {
+  outline: none;
+}
+
+.client-main h1 {
+  font-size: var(--text-xl);
+}
+
+.btn,
+.input,
+.choice span {
+  min-height: var(--control-height-touch);
+}
+
+.btn-lg {
+  padding: 0 var(--space-3xl);
+  font-size: var(--text-lg);
+}
+
+.dropzone {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 220px;
+  padding: var(--space-xl);
+  border: 2px dashed var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--color-background);
+  text-align: center;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out);
+}
+
+.dropzone.is-over {
+  border-color: var(--color-primary);
+  background: var(--color-info-bg);
+}
+
+.dropzone.has-image {
+  grid-template-columns: minmax(0, 1fr);
+  border-style: solid;
+}
+
+.dropzone-text {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-md);
+}
+
+.dropzone.has-image .dropzone-text {
+  grid-auto-flow: column;
+  align-items: center;
+}
+
+.dropzone.has-image .dropzone-text > :not(.picker-buttons) {
+  display: none;
+}
+
+.picker-buttons {
+  justify-content: center;
+}
+
+/* Điện thoại (màn cảm ứng): nút chụp ảnh + chọn từ thư viện thay cho kéo thả */
+.touch-only {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  label.touch-only {
+    display: inline-flex;
+  }
+
+  span.touch-only {
+    display: inline;
+  }
+
+  .pointer-fine {
+    display: none;
+  }
+
+  .picker-buttons .btn {
+    min-height: var(--control-height-touch);
+  }
+}
+
+#preview {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+  margin-bottom: var(--space-lg);
+  border-radius: var(--radius-md);
+  object-fit: contain;
+}
+
+.steps {
+  display: grid;
+  gap: var(--space-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.steps li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.steps li.is-current {
+  font-weight: var(--weight-semibold);
+  color: var(--color-info);
+}
+
+.steps li.is-done {
+  color: var(--color-muted-text);
+}
+
+.steps li.is-done .icon {
+  color: var(--color-success);
+}
+
+.log-box {
+  max-height: 260px;
+  margin: var(--space-md) 0 0;
+  padding: var(--space-lg);
+  overflow: auto;
+  border-radius: var(--radius-md);
+  background: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.top5 {
+  display: grid;
+  gap: var(--space-lg);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.top5 li {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.top5 .line {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-lg);
+}
+
+.top5 li:first-child .line {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+}
+
+.top5 .progress > span {
+  background: var(--color-secondary);
+}
+
+.top5 li:first-child .progress > span {
+  background: var(--color-primary);
+}
+
+.result-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--space-2xl);
+}
+
+.model-list {
+  display: grid;
+  gap: var(--space-md);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.model-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-md) var(--space-lg);
+  padding: var(--space-md) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.model-list li:last-child {
+  border-bottom: 0;
+}
+
+.history {
+  display: grid;
+  gap: var(--space-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+}
+
+.history li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm) var(--space-md);
+}
+
+@media (max-width: 767px) {
+  .result-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .client-main {
+    padding: var(--space-lg);
+  }
+
+  .btn-lg {
+    width: 100%;
+  }
+}
+
+/* Liên kết sang dashboard không dùng được từ thiết bị này (server ghi 127.0.0.1) */
+.link-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+a.btn {
+  text-decoration: none;
+}
+
+.dash-hint {
+  margin-top: var(--space-lg);
+}
+
+.dash-hint .icon {
+  vertical-align: -0.2em;
+}
