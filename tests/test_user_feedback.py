@@ -7,33 +7,38 @@ import json
 from pathlib import Path
 from fastapi.testclient import TestClient
 
-from selector.feedback_classifier import classify_user_feedback
+from selector.feedback_classifier import FeedbackClassifier
 from selector.retrain import correct_variant
+
+
+def lexicon(text: str) -> dict:
+    """Bộ từ khoá dự phòng, không phụ thuộc máy có cài PhoBERT hay không."""
+    return FeedbackClassifier(use_neural=False).classify(text).to_dict()
 
 
 def test_nlp_feedback_classifier_labels() -> None:
     # 1: Tệ
-    r1 = classify_user_feedback("Ứng dụng quá chậm, giật lag đơ máy không dùng được")
+    r1 = lexicon("Ứng dụng quá chậm, giật lag đơ máy không dùng được")
     assert r1["score"] == 1
     assert r1["label"] == "Tệ"
 
     # 2: Trung bình
-    r2 = classify_user_feedback("Tải hơi lâu, nhận diện chưa chuẩn")
+    r2 = lexicon("Tải hơi lâu, nhận diện chưa chuẩn")
     assert r2["score"] == 2
     assert r2["label"] == "Trung bình"
 
     # 3: Khá
-    r3 = classify_user_feedback("Dùng bình thường, tạm ổn")
+    r3 = lexicon("Dùng bình thường, tạm ổn")
     assert r3["score"] == 3
     assert r3["label"] == "Khá"
 
     # 4: Tốt
-    r4 = classify_user_feedback("Chạy nhanh, ổn định, dùng tốt")
+    r4 = lexicon("Chạy nhanh, ổn định, dùng tốt")
     assert r4["score"] == 4
     assert r4["label"] == "Tốt"
 
     # 5: Rất tốt
-    r5 = classify_user_feedback("Tuyệt vời, siêu nhanh và quá mượt")
+    r5 = lexicon("Tuyệt vời, siêu nhanh và quá mượt")
     assert r5["score"] == 5
     assert r5["label"] == "Rất tốt"
 

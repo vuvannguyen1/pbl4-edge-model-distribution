@@ -11,8 +11,9 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from selector.feedback_classifier import classify_user_feedback
 from server.config import Settings
-from server.devices import Device, DeviceStore
+from server.devices import Device, DeviceStore, clean_name
 from server.errors import ProtocolError, bad_request, unknown_device, unknown_variant
 from server.feedback import (
     FeedbackStore,
@@ -20,6 +21,7 @@ from server.feedback import (
     VariantStats,
     decide,
     evaluate_manual,
+    final_score,
 )
 from server.planner import PeerSource, build_plan, format_ranges, summarize_plan
 from server.registry import Registry, RegistryVariant
@@ -35,6 +37,7 @@ from server.schemas import (
     ManualFeedbackResponse,
     ModelRequest,
     ModelResponse,
+    PeerInfo,
     PlanItem,
     RegisterRequest,
     RegisterResponse,
@@ -67,6 +70,7 @@ DEFAULT_MS_PER_GFLOP = {
     ("onnxruntime", False): 12.0,  # client Python trên laptop/PC
 }
 MAX_THREAD_SPEEDUP = 4  # WASM đa luồng: mỗi luồng thêm nhanh ~50 %, tính tối đa 4 luồng
+NAME_ACTIVE_S = 30  # máy liên lạc trong ngần này giây thì giữ tên, máy khác không dùng trùng
 
 
 def budget_for(mode: str | None, target_fps: float | None) -> float | None:
@@ -109,7 +113,28 @@ class DistributionService:
 
     # ------------------------------------------------------------ đăng ký
 
+    def _check_name_free(self, device_id: str, name: str) -> None:
+        """Hai máy đang hoạt động không được trùng tên: tên để phân biệt máy khi P2P."""
+        wanted = name.casefold()
+        now = datetime.now(timezone.utc)
+        for other in self.devices.all():
+            if other.device_id == device_id or other.name.casefold() != wanted:
+                continue
+            seen = self.devices.last_seen(other.device_id)
+            recent = seen is not None and (
+                now - datetime.fromisoformat(seen)
+            ).total_seconds() <= NAME_ACTIVE_S
+            if recent or self.signals.is_online(other.device_id):
+                raise ProtocolError(
+                    "NAME_TAKEN", f"Tên '{name}' đang được máy khác dùng. Hãy chọn tên khác."
+                )
+
     def register(self, req: RegisterRequest, ip: str) -> RegisterResponse:
+        display_name = clean_name(req.display_name) if req.display_name else None
+        if req.display_name and not display_name:
+            raise bad_request("Tên máy không được để trống.")
+        if display_name:
+            self._check_name_free(req.device_id, display_name)
         try:
             device, existed = self.devices.register(
                 device_id=req.device_id,
@@ -120,6 +145,7 @@ class DistributionService:
                 peer_port=req.peer_port,
                 ip=ip,
                 capabilities=req.capabilities.model_dump() if req.capabilities else None,
+                display_name=display_name,
             )
         except ValueError as exc:
             raise bad_request(str(exc)) from exc
@@ -128,9 +154,10 @@ class DistributionService:
                 # máy khởi động lại thì cho nó cơ hội làm peer lần nữa
                 self.state.unban_origin(origin)
         logger.info(
-            "%s thiết bị %s: lớp %s, ip %s, peer_port %s, %s, RAM %d MB, %s%s",
+            "%s thiết bị %s (%s): lớp %s, ip %s, peer_port %s, %s, RAM %d MB, %s%s",
             "Đăng ký lại" if existed else "Đăng ký",
             device.device_id,
+            device.name,
             device.device_class,
             device.ip,
             device.peer_port,
@@ -239,11 +266,9 @@ class DistributionService:
             peers = self._find_peers(device, variant.variant_id)
             plan = build_plan(variant, base_url, peers)
             if peers:
-                peer_indexes = [p.index for p in plan if p.source == "peer"]
                 reason += (
-                    f" {', '.join(p.device_id for p in peers)} cùng lớp {device.device_class} "
-                    f"đã có đủ {variant.variant_id}, nên lấy miếng {format_ranges(peer_indexes)} "
-                    "từ peer, còn lại từ server để tải song song."
+                    f" {', '.join(p.name for p in peers)} đã có đủ {variant.variant_id}, "
+                    "nên lấy toàn bộ miếng từ máy đó, không cần tải từ server."
                 )
 
         record = self.state.create_request(
@@ -325,6 +350,7 @@ class DistributionService:
             reason=reason,
             estimated_download_s=estimate,
             plan=plan,
+            peers=[PeerInfo(device_id=p.device_id, name=p.name) for p in peers],
         )
 
     def _preferred(
@@ -387,7 +413,10 @@ class DistributionService:
         return base / (1 + 0.5 * (threads - 1)), "ước lượng"
 
     def _find_peers(self, requester: Device, variant_id: str) -> list[PeerSource]:
-        """Peer hợp lệ: khác thiết bị, cùng lớp, đã complete, chưa bị báo sai, và cùng cách P2P.
+        """Peer hợp lệ: khác thiết bị, đã complete variant, chưa bị báo sai, và cùng cách P2P.
+
+        Không xét lớp thiết bị: cùng variant là cùng một file, mỗi miếng đều được kiểm SHA-256,
+        nên hai máy khác cấu hình vẫn chia sẻ được. Lớp thiết bị chỉ dùng để chọn model.
 
         - Client Python (peer_port): peer HTTP `http://<ip>:<peer_port>`.
         - Trình duyệt (capabilities.p2p = webrtc): peer `webrtc://<device_id>` đang mở trang
@@ -402,7 +431,7 @@ class DistributionService:
             if device_id == requester.device_id:
                 continue
             device = self.devices.get(device_id)
-            if device is None or device.device_class != requester.device_class:
+            if device is None:
                 continue
             if wants_webrtc:
                 origin = device.webrtc_origin
@@ -414,13 +443,13 @@ class DistributionService:
                     continue
             if self.state.is_banned(origin):
                 continue
-            peers.append(PeerSource(device_id=device_id, origin=origin))
+            peers.append(PeerSource(device_id=device_id, origin=origin, name=device.name))
         return peers
 
     # ------------------------------------------------------------ khai báo model có sẵn
 
     def announce(self, req: AnnounceRequest) -> AnnounceResponse:
-        """Thiết bị mở lại trang với model trong kho: ghi nhận để làm peer cho máy cùng lớp."""
+        """Thiết bị mở lại trang với model trong kho: ghi nhận để làm peer cho máy khác."""
         device = self._device(req.device_id)
         self.devices.touch(device.device_id)
         accepted: list[str] = []
@@ -600,6 +629,7 @@ class DistributionService:
             "timestamp": now.isoformat(timespec="milliseconds"),
             **req.model_dump(),
             "device_class": device.device_class,
+            "device_name": device.name,
             "platform": device.platform,
             "runtime": device.runtime,
             "selector_version": record.selector_version,
@@ -663,15 +693,29 @@ class DistributionService:
         self.devices.touch(req.device_id)
         now = datetime.now(timezone.utc)
         received_at = now.isoformat(timespec="milliseconds")
+        # Chấm ngoài khoá của store (lần đầu phải nạp PhoBERT); gửi lại thì không chấm lại
+        comment = (
+            classify_user_feedback(req.comment)
+            if req.comment and not self.manual_feedback_store.has(req.feedback_id)
+            else None
+        )
+
+        score = final_score(req.rating, comment["score"] if comment else None)
 
         def make_entry(stats: VariantStats) -> dict:
             evaluation = evaluate_manual(
-                variant_id=req.variant_id, correct=req.correct, rating=req.rating, stats=stats
+                variant_id=req.variant_id,
+                correct=req.correct,
+                rating=req.rating,
+                stats=stats,
+                comment_score=comment["score"] if comment else None,
+                comment_engine=comment["engine"] if comment else None,
             )
             return {
                 "received_at": received_at,
                 **req.model_dump(),
                 "device_class": device.device_class if device else None,
+                "device_name": device.name if device else None,
                 "variant_ready": self.registry.get_ready(req.variant_id) is not None,
                 "evaluation": evaluation,
                 "processing_status": "evaluated",
@@ -679,7 +723,7 @@ class DistributionService:
             }
 
         entry, duplicate, path = self.manual_feedback_store.submit(
-            req.model_dump(), make_entry, now.astimezone()
+            {**req.model_dump(), "final_score": score}, make_entry, now.astimezone()
         )
         evaluation = ManualEvaluation(**entry["evaluation"])
         if duplicate:
@@ -699,15 +743,15 @@ class DistributionService:
                 req.variant_id,
                 req.rating,
                 req.prediction,
-                "đúng" if req.correct else "sai",
+                {True: "đúng", False: "sai", None: "không chấm"}[req.correct],
                 req.expected_label,
                 evaluation.verdict,
                 ", cần xem lại variant" if evaluation.needs_review else "",
                 evaluation.reason,
                 path.name if path else "",
             )
-            if req.comment:
-                self._classify_comment(req)
+            if comment:
+                self._record_comment(req, comment)
         try:
             from server.db import get_session_factory, record_user_feedback as db_record_user
             with get_session_factory()() as db_session:
@@ -716,7 +760,8 @@ class DistributionService:
                     device_id=req.device_id,
                     variant_id=req.variant_id,
                     feedback_text=req.comment or "",
-                    sentiment_score=req.rating,
+                    sentiment_score=evaluation.comment_score or req.rating,
+                    final_score=evaluation.final_score,
                     sentiment_label=evaluation.verdict,
                     flag_for_retrain=(evaluation.verdict == "negative" or evaluation.needs_review),
                     feedback_id=req.feedback_id,
@@ -734,10 +779,10 @@ class DistributionService:
             evaluation=evaluation,
         )
 
-    def _classify_comment(self, req: ManualFeedbackRequest) -> None:
-        """Nhận xét đi kèm đánh giá được chấm như một bản /api/user-feedback.
+    def _record_comment(self, req: ManualFeedbackRequest, comment: dict) -> None:
+        """Nhận xét đi kèm đánh giá (đã chấm) được ghi như một bản /api/user-feedback.
 
-        Chỉ gọi cho feedback_id mới, nên gửi bù nhiều lần vẫn chấm một lần. Không truyền
+        Chỉ gọi cho feedback_id mới, nên gửi bù nhiều lần vẫn ghi một lần. Không truyền
         feedback_id: dòng CSDL có feedback_id được tính là đánh giá thủ công (xem
         get_feedback_statistics), dòng này phải được tính là nhận xét chữ để khớp JSONL.
         Lỗi chỉ ghi log, không làm hỏng đánh giá chính đã lưu.
@@ -751,6 +796,10 @@ class DistributionService:
                     "distributed_variant": req.variant_id,
                     "feedback_text": req.comment,
                     "request_id": req.request_id,
+                    "score": comment["score"],
+                    "label": comment["label"],
+                    "confidence": comment["confidence"],
+                    "engine": comment["engine"],
                 },
                 self.settings.user_feedback_log,
             )

@@ -199,6 +199,7 @@ def _request_summary(service: DistributionService, record: DownloadRequest, now:
     return {
         "request_id": record.request_id,
         "device_id": record.device_id,
+        "device_name": device.name if device else record.device_id,
         "device_class": device.device_class if device else None,
         "variant_id": record.variant_id,
         "selector_version": record.selector_version,
@@ -362,6 +363,7 @@ def devices(request: Request) -> dict[str, Any]:
         items.append(
             {
                 **asdict(device),
+                "name": device.name,
                 "runtime_family": device.runtime_family,
                 "p2p_transport": device.p2p_transport,
                 "online": service.signals.is_online(device.device_id),
@@ -389,30 +391,19 @@ def links(request: Request) -> dict[str, Any]:
     http_port = settings.http_port or (
         request.url.port if request.url.scheme == "http" else None
     ) or 8000
-    hosts = lan_ipv4() or [request.url.hostname or "127.0.0.1"]
-    items = []
-    for host in hosts:
-        if settings.https_port:
-            items.append(
-                {
-                    "host": host,
-                    "url": f"https://{host}:{settings.https_port}/app/",
-                    "kind": "https",
-                    "note": "Camera trực tiếp. Lần đầu: Nâng cao → Tiếp tục (chứng chỉ tự ký).",
-                }
-            )
-        items.append(
-            {
-                "host": host,
-                "url": f"http://{host}:{http_port}/app/",
-                "kind": "http",
-                "note": "Không cần chứng chỉ; trình duyệt chỉ cho chụp từng ảnh."
-                if settings.https_port
-                else "Chụp từng ảnh. Muốn camera trực tiếp: bật server bằng "
-                "python -m server.serve.",
-            }
-        )
-    return {"links": items, "https_port": settings.https_port, "http_port": http_port}
+    host = settings.link_ip or (lan_ipv4() or [request.url.hostname or "127.0.0.1"])[0]
+    if settings.https_port:
+        link = {
+            "url": f"https://{host}:{settings.https_port}/app/",
+            "note": "Camera trực tiếp. Lần đầu: Nâng cao → Tiếp tục (chứng chỉ tự ký).",
+        }
+    else:
+        link = {
+            "url": f"http://{host}:{http_port}/app/",
+            "note": "Chỉ chụp từng ảnh. Muốn camera trực tiếp: bật server bằng "
+            "python -m server.serve.",
+        }
+    return {**link, "https_port": settings.https_port, "http_port": http_port}
 
 
 @router.post("/devices/{device_id}/heartbeat")
@@ -764,11 +755,16 @@ def request_detail(request: Request, request_id: str) -> dict[str, Any]:
     if record is None:
         raise ProtocolError("BAD_REQUEST", f"request_id '{request_id}' không tồn tại.", 404)
     banned = set(service.state.banned_origins())
+    names = {}
+    for device in service.devices.all():
+        names[device.peer_origin] = device.name
+        names[device.webrtc_origin] = device.name
     plan = [
         {
             "index": item.index,
             "source": item.source,
             "origin": url_origin(str(item.url)),
+            "peer_name": names.get(url_origin(str(item.url))),
             "size_bytes": item.size_bytes,
             "received": item.index in record.received,
             "bad": item.index in record.bad_chunks,

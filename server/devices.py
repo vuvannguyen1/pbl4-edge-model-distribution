@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -21,6 +22,11 @@ RAM_HIGH_MB = 8192
 WEB_RUNTIME = "onnxruntime-web"
 NATIVE_RUNTIME = "onnxruntime"
 MOBILE_PLATFORMS = {"android", "android_browser", "ios_browser"}
+
+
+def clean_name(name: str) -> str:
+    """Bỏ khoảng trắng thừa, chuẩn hoá dấu tiếng Việt."""
+    return " ".join(unicodedata.normalize("NFC", name).split())
 
 
 def arch_bucket(cpu_arch: str) -> str | None:
@@ -59,6 +65,12 @@ class Device:
     device_class: str
     registered_at: str
     capabilities: dict[str, Any] = field(default_factory=dict)
+    display_name: str | None = None
+
+    @property
+    def name(self) -> str:
+        """Tên hiện cho người dùng; máy không đặt tên (client Python) thì dùng device_id."""
+        return self.display_name or self.device_id
 
     @property
     def runtime_family(self) -> str:
@@ -115,6 +127,7 @@ class DeviceStore:
         peer_port: int | None,
         ip: str,
         capabilities: dict[str, Any] | None = None,
+        display_name: str | None = None,
     ) -> tuple[Device, bool]:
         """Đăng ký hoặc cập nhật thiết bị. Trả (thiết bị, có phải đăng ký lại không)."""
         device = Device(
@@ -128,6 +141,7 @@ class DeviceStore:
             device_class=compute_device_class(platform, cpu_arch, ram_mb),
             registered_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
             capabilities=dict(capabilities or {}),
+            display_name=display_name,
         )
         with self._lock:
             existed = device_id in self._devices

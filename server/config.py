@@ -12,6 +12,7 @@
 | PBL4_DATABASE_URL      | sqlite tại <PBL4_DATA_DIR>/pbl4.db |
 | PBL4_HTTPS_PORT        | rỗng (`python -m server.serve` tự đặt) |
 | PBL4_HTTP_PORT         | rỗng (`python -m server.serve` tự đặt) |
+| PBL4_LINK_IP           | rỗng (`python -m server.serve` tự đặt) |
 
 Đường dẫn tương đối tính từ gốc repo, không tính từ thư mục đang đứng.
 """
@@ -70,6 +71,7 @@ class Settings:
     https_port: int | None = None
     # Cổng HTTP, để dashboard in link/QR đúng cả khi đang mở qua cổng HTTPS
     http_port: int | None = None
+    link_ip: str = ""  # IP ghi trên link client; rỗng: IP của card mạng ra Internet
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
@@ -90,6 +92,7 @@ class Settings:
             data_dir=_resolve_path(env.get("PBL4_DATA_DIR", "data")),
             https_port=_parse_port(env.get("PBL4_HTTPS_PORT", "")),
             http_port=_parse_port(env.get("PBL4_HTTP_PORT", "")),
+            link_ip=env.get("PBL4_LINK_IP", "").strip(),
         )
 
     @property

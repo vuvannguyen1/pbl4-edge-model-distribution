@@ -289,25 +289,12 @@ main:focus-visible {
   font-weight: var(--weight-semibold);
 }
 
-.link-list,
 .plain-list {
   display: grid;
   gap: var(--space-sm);
   margin: 0;
   padding: 0;
   list-style: none;
-}
-
-.link-list li {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-sm) var(--space-md);
-}
-
-.link-list li > span {
-  flex: 1 1 14rem;
-  min-width: 0;
 }
 
 @media (max-width: 767px) {

@@ -53,7 +53,7 @@
       ]
     }
   },
-  "reason": "Lớp android_arm64_4-8gb đang dùng yolox_nano. phoneA cùng lớp đã có đủ 4 miếng, nên lấy miếng 0-1 từ phoneA và miếng 2-3 từ server để tải song song.",
+  "reason": "Lớp android_arm64_4-8gb đang dùng yolox_nano. phoneA đã có đủ yolox_nano, nên lấy toàn bộ miếng từ máy đó, không cần tải từ server.",
   "estimated_download_s": 6.2,
   "plan": [
     {
@@ -79,18 +79,24 @@
       "offset": 2097152,
       "size_bytes": 1048576,
       "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-      "source": "server",
-      "url": "http://192.168.137.1:8000/api/chunks/yolox_nano/2",
-      "fallback_url": null
+      "source": "peer",
+      "url": "http://192.168.137.12:9000/chunks/yolox_nano/2",
+      "fallback_url": "http://192.168.137.1:8000/api/chunks/yolox_nano/2"
     },
     {
       "index": 3,
       "offset": 3145728,
       "size_bytes": 513679,
       "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-      "source": "server",
-      "url": "http://192.168.137.1:8000/api/chunks/yolox_nano/3",
-      "fallback_url": null
+      "source": "peer",
+      "url": "http://192.168.137.12:9000/chunks/yolox_nano/3",
+      "fallback_url": "http://192.168.137.1:8000/api/chunks/yolox_nano/3"
+    }
+  ],
+  "peers": [
+    {
+      "device_id": "phoneA",
+      "name": "Điện thoại của Minh"
     }
   ]
 }

@@ -19,7 +19,7 @@ function decisionCard(r) {
       "div",
       { class: "req-title" },
       requestLink(r.request_id),
-      h("span", { class: "mono" }, r.device_id),
+      h("span", {}, r.device_name),
       h("span", { class: "arrow", "aria-hidden": "true" }, "→"),
       h("span", { class: "sr-only" }, "được chọn"),
       variantLink(r.variant_id),
@@ -143,7 +143,7 @@ function tryForm(onDone) {
       const selected = device.value;
       device.replaceChildren(
         ...(devs.devices.length
-          ? devs.devices.map((d) => h("option", { value: d.device_id }, `${d.device_id} (${d.device_class}${d.runtime_family === "onnxruntime-web" ? ", trình duyệt" : ""})`))
+          ? devs.devices.map((d) => h("option", { value: d.device_id }, `${d.name} (${d.device_class}${d.runtime_family === "onnxruntime-web" ? ", trình duyệt" : ""})`))
           : [h("option", { value: "" }, "Chưa có thiết bị nào đăng ký")]),
       );
       if (selected) device.value = selected;

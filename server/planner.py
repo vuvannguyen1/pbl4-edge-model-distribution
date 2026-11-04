@@ -1,8 +1,8 @@
 """Download Planner: lập plan chunk, chọn nguồn server hoặc peer cho từng miếng.
 
 Planner không biết thuật toán chọn model; nó chỉ nhận variant đã chọn,
-base URL của server và danh sách peer đã được xác minh (cùng lớp, đã
-`complete` variant, có peer_port, chưa từng bị báo gửi sai).
+base URL của server và danh sách peer đã được xác minh (đã `complete` variant,
+cùng cách truyền HTTP/WebRTC, chưa từng bị báo gửi sai).
 """
 
 from __future__ import annotations
@@ -17,7 +17,8 @@ from server.schemas import PlanItem
 @dataclass(frozen=True)
 class PeerSource:
     device_id: str
-    origin: str  # http://<ip>:<peer_port>
+    origin: str  # http://<ip>:<peer_port> hoặc webrtc://<device_id>
+    name: str = ""  # tên người dùng đặt cho máy, để báo "nhận model từ máy ..."
 
 
 def server_chunk_url(base_url: str, variant_id: str, index: int) -> str:
@@ -28,24 +29,18 @@ def peer_chunk_url(origin: str, variant_id: str, index: int) -> str:
     return f"{origin}/chunks/{variant_id}/{index}"
 
 
-def peer_chunk_count(chunk_count: int) -> int:
-    """Số miếng giao cho peer: nửa đầu, làm tròn lên (4 miếng -> 2, như file mẫu 04)."""
-    return (chunk_count + 1) // 2
-
-
 def build_plan(
     variant: RegistryVariant, base_url: str, peers: Sequence[PeerSource] = ()
 ) -> list[PlanItem]:
     """Plan đủ mọi miếng, sắp theo index.
 
-    Có peer: nửa đầu chia vòng tròn cho các peer (`fallback_url` = URL server),
-    nửa sau lấy từ server. Không có peer: mọi miếng từ server.
+    Có peer: mọi miếng chia vòng tròn cho các peer, server không phải gửi gì; `fallback_url` là
+    URL server để peer lỗi thì tải lại. Không có peer: mọi miếng từ server.
     """
-    peer_share = peer_chunk_count(variant.chunk_count) if peers else 0
     plan: list[PlanItem] = []
     for chunk in variant.chunks:
         server_url = server_chunk_url(base_url, variant.variant_id, chunk.index)
-        if chunk.index < peer_share:
+        if peers:
             peer = peers[chunk.index % len(peers)]
             source, url, fallback = (
                 "peer",

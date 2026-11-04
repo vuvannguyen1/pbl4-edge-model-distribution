@@ -1,6 +1,6 @@
-"""P2P: hai client cùng máy (cùng device_class), khác device_id và peer_port.
+"""P2P: hai client cùng máy, khác device_id và peer_port.
 
-- Client B nhận ít nhất một miếng có source "peer" từ client A.
+- Client B nhận toàn bộ miếng từ client A, không tải từ server.
 - Tắt peer A: client sau vẫn hoàn tất nhờ fallback về server.
 """
 
@@ -55,7 +55,8 @@ def test_client_b_gets_chunks_from_peer_a_then_fallback(tmp_path: Path, live_ser
 
         result_b = agent_b.run()
         assert result_b.variant["id"] == result_a.variant["id"]
-        assert result_b.download.chunks_from_peer >= 1
+        assert result_b.download.chunks_from_peer == result_b.variant["chunk_count"]
+        assert result_b.download.chunks_from_server == 0
         assert "peer" in result_b.download.sources.values()
         assert sha256_file(result_b.model_path) == result_b.variant["sha256"]
         assert result_b.feedback_payload["chunks_from_peer"] >= 1
@@ -126,34 +127,52 @@ def _complete(client: TestClient, device_id: str, response: dict) -> None:
     assert client.post("/api/have", json=body).status_code == 200
 
 
-def test_planner_assigns_first_half_to_verified_peer(client: TestClient) -> None:
+def test_planner_assigns_every_chunk_to_verified_peer(client: TestClient) -> None:
     _register(client, "phoneA", 9000)
     _complete(client, "phoneA", _request(client, "phoneA"))
     _register(client, "phoneB", 9001)
     response = _request(client, "phoneB")
     assert schema_errors("ModelResponse", response) == []
     plan = response["plan"]
-    n = len(plan)
-    peer_items = [p for p in plan if p["source"] == "peer"]
-    assert [p["index"] for p in peer_items] == list(range((n + 1) // 2))
-    for item in peer_items:
+    assert all(p["source"] == "peer" for p in plan)
+    assert response["peers"] == [{"device_id": "phoneA", "name": "phoneA"}]
+    for item in plan:
         assert item["url"].startswith("http://testclient:9000/chunks/")
         assert item["fallback_url"].endswith(
             f"/api/chunks/{response['variant']['id']}/{item['index']}"
         )
-    assert all(p["fallback_url"] is None for p in plan if p["source"] == "server")
     assert "phoneA" in response["reason"]
 
 
-def test_planner_requires_same_class_peer_port_and_complete(client: TestClient) -> None:
+def test_planner_shares_chunks_between_several_peers(client: TestClient) -> None:
+    for device, port in (("phoneA", 9000), ("phoneC", 9002)):
+        _register(client, device, port)
+        _complete(client, device, _request(client, device))
+    _register(client, "phoneB", 9001)
+    response = _request(client, "phoneB")
+    ports = {p["url"].split(":")[2].split("/")[0] for p in response["plan"]}
+    assert ports == {"9000", "9002"}
+    assert {p["device_id"] for p in response["peers"]} == {"phoneA", "phoneC"}
+
+
+def test_planner_needs_peer_port_and_complete(client: TestClient) -> None:
     _register(client, "noPort", None)
     _complete(client, "noPort", _request(client, "noPort"))
-    _register(client, "otherClass", 9002, ram_mb=2048)
-    _complete(client, "otherClass", _request(client, "otherClass"))
     _register(client, "notDone", 9003)
     _request(client, "notDone")
     _register(client, "phoneB", 9001)
-    assert all(p["source"] == "server" for p in _request(client, "phoneB")["plan"])
+    response = _request(client, "phoneB")
+    assert all(p["source"] == "server" for p in response["plan"])
+    assert response["peers"] == []
+
+
+def test_peer_with_other_device_class_shares_same_model(client: TestClient) -> None:
+    """Cùng model là cùng file: máy khác cấu hình vẫn gửi được (bug.md)."""
+    _register(client, "weakPhone", 9002, ram_mb=2048)
+    _complete(client, "weakPhone", _request(client, "weakPhone"))
+    _register(client, "strongPhone", 9001, ram_mb=16384)
+    response = _request(client, "strongPhone")
+    assert all(p["source"] == "peer" for p in response["plan"])
 
 
 def test_planner_skips_peer_reported_bad(client: TestClient) -> None:

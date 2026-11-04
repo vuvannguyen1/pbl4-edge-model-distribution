@@ -6,10 +6,10 @@ theo cấu hình và băng thông, có P2P giữa các thiết bị cùng cấu 
 - **Server** (Python FastAPI): đọc danh mục 10 model CV từ Registry (YOLOX nano→x, SSD
   MobileNet FP32/INT8, Faster R-CNN INT8, RetinaNet), chọn bản có mAP cao nhất mà thiết bị
   tải kịp, đủ RAM, chạy được (trình duyệt hay Python) và đủ nhanh cho chế độ dùng (camera trực
-  tiếp hay ảnh chụp); lập kế hoạch tải theo miếng 1 MiB, ghép P2P giữa các máy cùng lớp, nhận
+  tiếp hay ảnh chụp); lập kế hoạch tải theo miếng 1 MiB, ghép P2P giữa các máy có cùng model, nhận
   feedback và học tốc độ thật của từng lớp thiết bị.
 - **Giao diện client `/app`** (trình duyệt, không cài gì): mở link là tự đăng ký, xin model, tải
-  từng miếng (từ server và từ máy cùng lớp qua WebRTC) có kiểm SHA-256, lưu model trong trình
+  từng miếng (từ máy khác đã có model qua WebRTC, không có thì từ server) có kiểm SHA-256, lưu model trong trình
   duyệt và **phát hiện vật thể bằng camera** (onnxruntime-web, chạy ngay trên máy).
 - **Client Python** (`client.agent`, `client.detect`): cho thiết bị không có trình duyệt; chạy
   được cả 10 model trên ảnh, làm peer HTTP chia sẻ miếng cho máy khác, nhận diện offline.
@@ -28,32 +28,33 @@ Trên máy server (một lần: `pip install -e .[dev]`, `python tools\download_
 python -m server.serve
 ```
 
-Lệnh in ra link cho điện thoại/laptop cùng Wi-Fi/hotspot, ví dụ:
+Lệnh in đúng một link cho client và một link dashboard, theo IP của mạng đang dùng, ví dụ:
 
 ```text
- Link cho điện thoại (cùng Wi-Fi/hotspot với máy này):
-   https://192.168.137.1:8443/app/          camera trực tiếp (khuyên dùng)
-   http://192.168.137.1:8000/app/           chỉ chụp ảnh
- Dashboard (có mã QR của link): http://192.168.137.1:8000/
+ Link cho client (điện thoại, laptop cùng mạng): https://172.20.10.2:8443/app/
+ Link dashboard của server:                      http://172.20.10.2:8000/
 ```
 
 - Người dùng mở link (hoặc quét mã QR ở trang Tổng quan của dashboard), bấm **Xin model**, rồi
   **Bật camera**. Lần đầu mở bản HTTPS, trình duyệt báo chứng chỉ không tin cậy (chứng chỉ tự ký
   của server): chọn *Nâng cao → Tiếp tục*.
-- Bật **Mobile Hotspot** của Windows trên máy server thì IP luôn là `192.168.137.1`, link cố định.
+- IP đổi khi đổi mạng. Máy có nhiều card mạng (VMware, VirtualBox...) mà link in sai IP thì chỉ định
+  bằng `python -m server.serve --ip <IP đúng>`.
 - Điện thoại không mở được link: mở tường lửa (PowerShell chạy bằng quyền Administrator):
   `New-NetFirewallRule -DisplayName "PBL4 server" -Direction Inbound -Protocol TCP -LocalPort 8000,8443 -Action Allow -Profile Any`
-- Trình duyệt chỉ cho mở camera liên tục trên HTTPS. Bản HTTP vẫn xin model và chụp từng ảnh.
+- Trình duyệt chỉ cho mở camera liên tục trên HTTPS. Muốn chạy không cần chứng chỉ: `--no-https`,
+  link client thành `http://<IP>:8000/app/`, chỉ chụp được từng ảnh.
 - Chứng chỉ tạo một lần trong `data\certs\` (cần `pip install cryptography`, hoặc openssl có sẵn
   trong Git for Windows). Tham số: `--port 8000 --https-port 8443`, `--no-https`.
 
-Giao diện client có 3 tab:
+Lần đầu mở link, người dùng đặt tên cho máy (hai máy đang hoạt động không được trùng tên), đổi lại
+được ở thẻ **Máy này**. Tên này hiện cho máy khác khi chia sẻ model. Giao diện client có 3 tab:
 
 | Tab | Làm gì |
 |---|---|
-| Model | Chọn **Camera trực tiếp** (server chọn model ≥ 5 khung/giây trên máy này) hoặc **Ảnh chụp** (model chính xác hơn, ≤ 2,5 s/ảnh); xem các bước, lý do server chọn, lưới miếng S (server) / P (peer). Model lưu trong trình duyệt, lần sau mở link dùng ngay. Khi trang mở, máy cùng lớp tải P2P từ máy này |
+| Model | Chọn **Camera trực tiếp** (server chọn model ≥ 5 khung/giây trên máy này) hoặc **Ảnh chụp** (model chính xác hơn, ≤ 2,5 s/ảnh); xem các bước, lý do server chọn, lưới miếng S (server) / P (peer). Model lưu trong trình duyệt, lần sau mở link dùng ngay. Khi trang mở, máy khác xin cùng model (khác cấu hình cũng được) tải toàn bộ từ máy này, và được báo "Bạn đã nhận được mô hình ... từ máy ..." |
 | Camera | Camera trực tiếp có khung + tên vật thể tiếng Việt, FPS; chụp/chọn ảnh; ngưỡng tin cậy; lọc theo loại vật thể; đổi camera trước/sau |
-| Đánh giá | Chấm điểm khung hình đã chụp, đúng/sai, vật thể thực tế, nhận xét (`POST /api/feedback`) |
+| Đánh giá | Chọn 1–5 sao và viết nhận xét, dùng được ngay khi máy có model, không cần chụp khung hình (`POST /api/feedback`) |
 
 ## Chạy chương trình
 
@@ -69,6 +70,10 @@ pip install -e .[dev]
 python tools\download_models.py
 python tools\download_assets.py
 ```
+
+Chấm bình luận đánh giá bằng PhoBERT cần thêm `pip install -e .[phobert]` trên máy server (thiếu
+thì server chấm theo từ khoá, `comment_engine` trả `lexicon`). Điểm đánh giá = số sao × 0,2 +
+điểm PhoBERT (1–5) × 0,8; không có bình luận thì điểm bằng số sao.
 
 `download_models.py` tải và kiểm tra đủ 10 model CV. `download_assets.py` tải thêm
 onnxruntime-web vào `server/webclient/vendor/` để điện thoại không cần Internet (thiếu thì trang

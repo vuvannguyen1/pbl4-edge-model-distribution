@@ -68,6 +68,10 @@ class Capabilities(_Incoming):
     p2p: Literal["webrtc", "http", "none"] = "none"  # cách thiết bị chia sẻ miếng cho máy khác
 
 
+# Tên người dùng đặt cho máy (tiếng Việt được), khác `device_id` chỉ gồm ký tự không dấu
+DisplayName = Annotated[str, StringConstraints(pattern=r"^[^\x00-\x1f\x7f]{1,32}$")]
+
+
 class RegisterRequest(_Incoming):
     protocol_version: Literal["1.0"]
     device_id: DeviceId
@@ -77,6 +81,7 @@ class RegisterRequest(_Incoming):
     runtime: NonEmptyStr
     peer_port: int | None = Field(ge=1024, le=65535)
     capabilities: Capabilities | None = None
+    display_name: DisplayName | None = None
 
 
 class RegisterResponse(_Outgoing):
@@ -151,12 +156,18 @@ class PlanItem(_Outgoing):
         return self
 
 
+class PeerInfo(_Outgoing):
+    device_id: DeviceId
+    name: str
+
+
 class ModelResponse(_Outgoing):
     request_id: NonEmptyStr
     variant: Variant
     reason: str
     estimated_download_s: NullableNonNeg
     plan: list[PlanItem]
+    peers: list[PeerInfo] = Field(default_factory=list)  # máy gửi miếng, để báo nguồn nhận model
 
 
 # ---------------------------------------------------------------- Tiến độ
@@ -252,7 +263,7 @@ class ManualFeedbackRequest(_Incoming):
     device_id: DeviceId
     variant_id: VariantId
     rating: int = Field(ge=1, le=5)
-    correct: bool
+    correct: bool | None = None  # giao diện /app không còn hỏi đúng/sai
     prediction: ShortText | None
     confidence: NullableRatio
     expected_label: ShortText | None
@@ -268,9 +279,14 @@ class ManualEvaluation(_Outgoing):
     verdict: Literal["positive", "neutral", "negative"]
     needs_review: bool
     variant_feedback_count: int = Field(ge=1)
-    variant_correct_rate: Ratio
+    variant_correct_rate: NullableRatio  # null khi chưa lượt nào trả lời đúng/sai
     variant_avg_rating: float = Field(ge=1, le=5)
+    variant_avg_score: float | None = Field(default=None, ge=1, le=5)
     reason: str
+    # Điểm tổng hợp lượt này (sao × 0,2 + PhoBERT × 0,8); null ở bản ghi cũ
+    final_score: float | None = Field(default=None, ge=1, le=5)
+    comment_score: int | None = Field(default=None, ge=1, le=5)  # PhoBERT, rời rạc 1..5
+    comment_engine: str | None = None  # "neural" (PhoBERT) hoặc "lexicon" (từ khoá dự phòng)
 
 
 class ManualFeedbackResponse(_Outgoing):
@@ -327,6 +343,7 @@ ErrorCode = Literal[
     "CHUNK_OUT_OF_RANGE",
     "VERSION_MISMATCH",
     "NO_VARIANT_FITS",
+    "NAME_TAKEN",
     "INTERNAL",
 ]
 

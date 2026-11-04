@@ -24,11 +24,13 @@ import argparse
 import asyncio
 import ipaddress
 import json
+import logging
 import os
 import shutil
 import ssl
 import subprocess
 import sys
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -180,23 +182,22 @@ def tls_forwarder(target_host: str, target_port: int):
 # ---------------------------------------------------------------- chạy
 
 
-def banner(ips: list[str], port: int, https_port: int | None) -> str:
-    hosts = ips or ["<IP máy server>"]
-    lines = ["", "=" * 72, " Link cho điện thoại (cùng Wi-Fi/hotspot với máy này):"]
-    for ip in hosts:
-        if https_port:
-            lines.append(
-                f"   https://{ip}:{https_port}/app/".ljust(42) + "camera trực tiếp (khuyên dùng)"
-            )
-        lines.append(f"   http://{ip}:{port}/app/".ljust(42) + "chỉ chụp ảnh")
+def banner(ip: str | None, port: int, https_port: int | None) -> str:
+    """Một link cho client, một link dashboard, theo IP của mạng đang dùng."""
+    host = ip or "<IP máy server>"
+    client = f"https://{host}:{https_port}/app/" if https_port else f"http://{host}:{port}/app/"
+    lines = [
+        "",
+        "=" * 72,
+        f" Link cho client (điện thoại, laptop cùng mạng): {client}",
+        f" Link dashboard của server:                      http://{host}:{port}/",
+    ]
     if https_port:
-        lines.append(
-            " Bản https lần đầu báo không an toàn (chứng chỉ tự ký): Nâng cao -> Tiếp tục."
-        )
-    lines.append(f" Dashboard (có mã QR của link): http://{hosts[0]}:{port}/")
+        lines.append(" Lần đầu mở link client, trình duyệt cảnh báo: Nâng cao -> Tiếp tục.")
     ports = f"{port},{https_port}" if https_port else str(port)
     lines += [
-        " Điện thoại không mở được link: mở tường lửa (PowerShell chạy bằng quyền Administrator)",
+        " Sai mạng (máy có nhiều card mạng): python -m server.serve --ip <IP đúng>",
+        " Máy khác không mở được link: mở tường lửa (PowerShell quyền Administrator)",
         f'   New-NetFirewallRule -DisplayName "PBL4 server" -Direction Inbound -Protocol TCP '
         f"-LocalPort {ports} -Action Allow -Profile Any",
         "=" * 72,
@@ -205,7 +206,30 @@ def banner(ips: list[str], port: int, https_port: int | None) -> str:
     return "\n".join(lines)
 
 
-async def _serve(server, host: str, https_port: int | None, ssl_ctx, ips: list[str]) -> None:
+def _preload_phobert() -> None:
+    """Nạp sẵn PhoBERT (vài giây) để người gửi đánh giá đầu tiên không phải chờ."""
+    log = logging.getLogger("pbl4.server")
+    try:
+        from selector.feedback_classifier import classify_user_feedback
+
+        engine = classify_user_feedback("ok")["engine"]
+    except Exception as exc:  # không chặn server: đánh giá vẫn chấm được bằng từ khoá
+        log.warning("Không nạp được PhoBERT: %s", exc)
+        return
+    if engine == "neural":
+        log.info("Đã nạp PhoBERT để chấm bình luận")
+    else:
+        log.warning("Thiếu PhoBERT, chấm bình luận theo từ khoá: pip install -e .[phobert]")
+
+
+def _ignore_connection_reset(loop: asyncio.AbstractEventLoop, context: dict) -> None:
+    """Trên Windows, trình duyệt đóng trang làm asyncio in Traceback ConnectionResetError vô hại."""
+    if not isinstance(context.get("exception"), ConnectionResetError):
+        loop.default_exception_handler(context)
+
+
+async def _serve(server, host: str, https_port: int | None, ssl_ctx, ip: str | None) -> None:
+    asyncio.get_running_loop().set_exception_handler(_ignore_connection_reset)
     forwarder = None
     if ssl_ctx is not None:
         target = "127.0.0.1" if host in ("", "0.0.0.0") else host
@@ -216,7 +240,8 @@ async def _serve(server, host: str, https_port: int | None, ssl_ctx, ips: list[s
     while not server.started and not task.done():
         await asyncio.sleep(0.1)
     if server.started:
-        print(banner(ips, server.config.port, https_port if forwarder else None), flush=True)
+        print(banner(ip, server.config.port, https_port if forwarder else None), flush=True)
+        threading.Thread(target=_preload_phobert, daemon=True).start()
     try:
         await task
     finally:
@@ -230,12 +255,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--https-port", type=int, default=DEFAULT_HTTPS_PORT)
     parser.add_argument("--no-https", action="store_true", help="không mở cổng HTTPS")
+    parser.add_argument(
+        "--ip", default=None, help="IP in trên link; mặc định: IP của card mạng ra Internet"
+    )
     args = parser.parse_args(argv)
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
 
     ips = lan_ipv4()
+    if args.ip and args.ip not in ips:
+        ips.append(args.ip)
+    link_ip = args.ip or (ips[0] if ips else None)
     ssl_ctx = None
     if not args.no_https:
         try:
@@ -248,6 +279,7 @@ def main(argv: list[str] | None = None) -> int:
     # server.main đọc các biến này khi uvicorn import app: trang /app qua HTTP chỉ sang bản HTTPS,
     # dashboard in link/QR đúng cổng
     os.environ["PBL4_HTTP_PORT"] = str(args.port)
+    os.environ["PBL4_LINK_IP"] = link_ip or ""
     if ssl_ctx is not None:
         os.environ["PBL4_HTTPS_PORT"] = str(args.https_port)
     else:
@@ -257,7 +289,7 @@ def main(argv: list[str] | None = None) -> int:
 
     server = uvicorn.Server(uvicorn.Config("server.main:app", host=args.host, port=args.port))
     try:
-        asyncio.run(_serve(server, args.host, args.https_port, ssl_ctx, ips))
+        asyncio.run(_serve(server, args.host, args.https_port, ssl_ctx, link_ip))
     except KeyboardInterrupt:
         pass
     return 0

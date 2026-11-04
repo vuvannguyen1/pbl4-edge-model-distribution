@@ -332,3 +332,70 @@ a.btn {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* ---- Màn hình đặt tên máy */
+
+.login {
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  padding: var(--space-xl);
+}
+
+.login[hidden] {
+  display: none;
+}
+
+.login-card {
+  width: min(100%, 28rem);
+}
+
+.login h1 {
+  font-size: var(--text-xl);
+}
+
+body.is-login .m-top,
+body.is-login .m-main {
+  display: none;
+}
+
+/* ---- Chọn sao */
+
+.stars {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.stars label {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: var(--control-height-touch);
+  height: var(--control-height-touch);
+  color: var(--color-border-strong);
+  font-size: 2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.stars label.is-on {
+  color: var(--color-accent);
+}
+
+.stars input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.stars input:focus-visible + span {
+  outline: 3px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+/* Câu báo nguồn nhận model dài: xuống dòng, không đẩy rộng trang */
+#source-note .badge {
+  white-space: normal;
+}

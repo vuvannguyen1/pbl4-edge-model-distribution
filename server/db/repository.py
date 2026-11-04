@@ -164,6 +164,7 @@ def record_user_feedback(
     sentiment_confidence: float | None = None,
     sentiment_engine: str | None = None,
     feedback_reason: str | None = None,
+    final_score: float | None = None,
 ) -> UserFeedbackRecord:
     """Lưu đánh giá người dùng (NLP sentiment / CLI rating) vào database."""
     if feedback_id:
@@ -183,6 +184,7 @@ def record_user_feedback(
         actual_label=actual_label,
         feedback_text=feedback_text,
         sentiment_score=sentiment_score,
+        final_score=final_score,
         sentiment_label=sentiment_label,
         flag_for_retrain=flag_for_retrain,
         sentiment_confidence=sentiment_confidence,

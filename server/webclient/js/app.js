@@ -16,9 +16,11 @@ const TABS = ["model", "camera", "feedback"];
 const METRIC_RUNS = 10; // số khung đầu tiên dùng tính latency/FPS gửi server
 const PHOTO_MAX_SIDE = 1280;
 const BIG_MODEL_BYTES = 100 * 1048576;
+const FEEDBACK_TIMEOUT_MS = 30000; // lần đầu server phải nạp PhoBERT nếu chưa nạp sẵn
 const LIVE_FPS = 5;
 const DEVICE_ID_RE = /^[A-Za-z0-9_-]{1,32}$/;
 const KEY_DEVICE = "pbl4.app.deviceId";
+const KEY_NAME = "pbl4.app.deviceName";
 const KEY_ACTIVE = "pbl4.app.activeVariant";
 const KEY_MODE = "pbl4.app.mode";
 const BOX_COLORS = ["#1d4ed8", "#c2410c", "#15803d", "#7e22ce", "#b91c1c", "#0f766e", "#a16207", "#be185d"];
@@ -30,6 +32,7 @@ const MODE_HINT = {
 
 const state = {
   deviceId: null,
+  name: null, // tên người dùng đặt cho máy
   deviceClass: null,
   bandwidth: null,
   registered: false,
@@ -42,6 +45,7 @@ const state = {
   metrics: null, // số đo lượt tải gần nhất, gửi sau METRIC_RUNS lượt nhận diện
   latencies: [],
   last: null, // {boxes, at, source, width, height} lượt nhận diện gần nhất
+  frozen: null, // khung hình gửi kèm đánh giá (không bắt buộc)
   live: false,
   stream: null,
   facing: "environment",
@@ -182,7 +186,7 @@ class Steps {
 
 async function ensureRegistered(steps) {
   steps?.set("register", "current");
-  const reg = await guard(register(state.deviceId));
+  const reg = await guard(register(state.deviceId, state.name));
   state.registered = true;
   state.deviceClass = reg.device_class;
   setConn(true, `Đã kết nối · ${reg.device_class}`);
@@ -217,6 +221,7 @@ async function onRequestClick() {
   clear($("download-view"));
   clear($("notes"));
   clear($("suggestion"));
+  clear($("source-note"));
   const steps = new Steps($("steps"));
   try {
     await runRequest(steps, $("preferred").value || null);
@@ -300,7 +305,7 @@ async function runRequest(steps, preferred) {
     steps.set("save", "current");
     try {
       await store.saveModel(
-        { variant_id: variant.id, variant, size_bytes: variant.size_bytes, sha256: variant.sha256, saved_at: new Date().toISOString() },
+        { variant_id: variant.id, variant, size_bytes: variant.size_bytes, sha256: variant.sha256, saved_at: new Date().toISOString(), received_from: result.source },
         bytes.buffer,
       );
       steps.set("save", "done", "lần sau mở link dùng ngay");
@@ -320,7 +325,21 @@ async function runRequest(steps, preferred) {
   steps.set("load", "current");
   await activate(bytes, variant);
   steps.set("load", "done", `${fmt.ms(state.detector.loadMs)} · ${state.detector.threads} luồng · onnxruntime-web từ ${state.detector.ortSource}`);
-  afterReady();
+  afterReady(state.lastSource);
+}
+
+// "máy Minh", "máy Minh và máy Lan", "máy Minh (18 miếng) và server (2 miếng)"
+function sourceText(resp, result) {
+  const nameOf = (id) => {
+    const name = resp.peers?.find((p) => p.device_id === id)?.name || id;
+    return /^máy\s/i.test(name) ? name : `máy ${name}`; // tên "Máy của Minh": không lặp chữ máy
+  };
+  const peers = Object.entries(result.peerCounts);
+  if (!peers.length) return "server";
+  const mixed = peers.length > 1 || result.fromServer > 0;
+  const parts = peers.map(([id, count]) => `${nameOf(id)}${mixed ? ` (${count} miếng)` : ""}`);
+  if (result.fromServer) parts.push(`server (${result.fromServer} miếng)`);
+  return parts.join(" và ");
 }
 
 // Câu lý do của server: "<chọn ...>; loại A vì ..., B vì .... <câu P2P nếu có>"
@@ -379,11 +398,15 @@ async function runDownload(resp, bandwidth, steps) {
   steps.set("download", "done", `${fmt.ms(result.downloadMs)} · ${parts.join(", ")}`);
   const have = await reportHave(state.deviceId, resp, plan.map((p) => p.index), true, bandwidth, result.badChunks);
   if (have?.action === "switch") showSuggestion(have.new_variant_id, have.reason);
+  result.source = sourceText(resp, result);
+  state.lastSource = `Bạn đã nhận được mô hình ${variant.id} từ ${result.source}.`;
+  clear($("source-note"), badge("success", state.lastSource, "download-simple"));
   return result;
 }
 
-function afterReady() {
-  toast(`Đã sẵn sàng: ${state.detector.variantId}. Bật camera để phát hiện vật thể.`);
+function afterReady(source = null) {
+  toast(source || `Đã sẵn sàng: ${state.detector.variantId}. Bật camera để phát hiện vật thể.`);
+  state.lastSource = null;
   goTab("camera");
 }
 
@@ -677,58 +700,81 @@ function freezeFrame() {
   state.frozen = { ...last, source: null };
   $("snap-summary").textContent = `${state.detector.variantId} · ${summaryText(last.boxes)}`;
   $("snap").hidden = false;
-  $("snap-empty").hidden = true;
-  $("feedback-form").hidden = false;
   clear($("feedback-result"));
   goTab("feedback");
+}
+
+// Model được đánh giá: model đang dùng, chưa nạp thì model mới nhất trong kho
+const feedbackVariant = () => state.detector?.variantId || lsGet(KEY_ACTIVE) || state.local[0]?.variant_id || null;
+
+function renderFeedbackAvailable() {
+  const variant = feedbackVariant();
+  $("feedback-empty").hidden = !!variant;
+  $("feedback-form").hidden = !variant;
+  $("feedback-model").textContent = variant ? `Đánh giá model ${variant}` : "";
+}
+
+function renderStars() {
+  const value = Number(document.querySelector('input[name="rating"]:checked')?.value || 0);
+  for (const label of document.querySelectorAll("#stars label")) {
+    label.classList.toggle("is-on", Number(label.dataset.value) <= value);
+  }
 }
 
 // ---------------------------------------------------------------- đánh giá
 
 async function sendFeedback(event) {
   event.preventDefault();
-  const frozen = state.frozen;
-  if (!state.detector || !frozen) return;
+  const variantId = feedbackVariant();
+  if (!variantId) return;
+  const frozen = state.frozen; // không bắt buộc: có khung hình thì gửi kèm kết quả nhận diện
   const data = new FormData(event.target);
   const rating = Number(data.get("rating"));
-  const correct = data.get("correct");
-  if (!rating || !correct) {
-    toast("Chọn điểm và cho biết model nhận đúng hay sai.", "warning");
+  if (!rating) {
+    toast("Chọn số sao trước khi gửi.", "warning");
     return;
   }
-  const boxes = frozen.boxes;
+  const boxes = frozen?.boxes || [];
   const prediction = boxes.length ? boxes.slice(0, 5).map((b) => `${b.label} ${Math.round(b.score * 100)}%`).join(", ").slice(0, 200) : null;
   const text = (name) => String(data.get(name) || "").trim() || null;
+  // gửi lại sau khi lỗi mạng dùng cùng mã: server có thể đã nhận, không được ghi trùng
+  state.feedbackId ||= `fb-${state.deviceId}-${Date.now().toString(36)}`;
   const button = $("feedback-btn");
   setBusy(button, true, "Đang gửi…");
   try {
     const resp = await guard(
       api("/api/feedback", {
         method: "POST",
+        timeoutMs: FEEDBACK_TIMEOUT_MS,
         body: {
-          feedback_id: `fb-${state.deviceId}-${Date.now().toString(36)}`,
+          feedback_id: state.feedbackId,
           device_id: state.deviceId,
-          variant_id: state.detector.variantId,
+          variant_id: variantId,
           rating,
-          correct: correct === "yes",
           prediction,
           confidence: boxes.length ? boxes[0].score : null,
           expected_label: text("expected")?.slice(0, 200) ?? null,
           comment: text("comment")?.slice(0, 1000) ?? null,
           request_id: state.requestId,
-          detected_at: frozen.at,
+          detected_at: frozen?.at ?? null,
           created_at: new Date().toISOString(),
         },
       }),
     );
     const ev = resp.evaluation;
     const [kind, label] = VERDICT[ev.verdict] || ["neutral", ev.verdict];
+    const detail = ev.comment_score == null ? `${rating} sao, không có bình luận` : `${rating} sao, bình luận ${ev.comment_score}/5`;
     clear(
       $("feedback-result"),
       h("p", { class: "row" }, badge("success", "Server đã nhận"), badge(kind, `Đánh giá: ${label}`)),
+      h("p", {}, h("strong", {}, `Điểm ${fmt.num(ev.final_score, 2)} / 5`), ` · ${detail}`),
       h("p", { class: "small muted" }, fmt.text(ev.reason)),
     );
     event.target.reset();
+    renderStars();
+    state.feedbackId = null;
+    state.frozen = null;
+    $("snap").hidden = true;
   } catch (err) {
     toast(`Chưa gửi được đánh giá: ${err.message}`, "danger");
   } finally {
@@ -742,19 +788,21 @@ function renderDeviceInfo() {
   const info = deviceInfo();
   const d = state.detector;
   const rows = [
+    ["Tên máy", state.name || "chưa đặt"],
     ["Mã thiết bị", h("span", { class: "mono" }, state.deviceId)],
     ["Lớp thiết bị", state.deviceClass ? h("span", { class: "mono" }, state.deviceClass) : "chưa đăng ký"],
     ["Loại máy", `${info.platform === "web_desktop" ? "Máy tính" : "Điện thoại"} · ${info.cpu_arch} · RAM ~${fmt.int(info.ram_mb / 1024)} GB`],
     ["Chạy model", `onnxruntime-web · ${d ? d.threads : info.threads} luồng${info.threads > 1 ? "" : " (mở bản HTTPS để chạy đa luồng)"}`],
     ["Băng thông", state.bandwidth ? fmt.kbps(state.bandwidth) : "đo khi xin model"],
     ["Camera trực tiếp", info.camera ? badge("success", "Dùng được") : badge("warning", "Cần mở bản HTTPS")],
-    ["Chia sẻ P2P", info.webrtc ? "WebRTC với máy cùng lớp khi trang đang mở" : "Trình duyệt không hỗ trợ WebRTC"],
+    ["Chia sẻ P2P", info.webrtc ? "WebRTC với mọi máy xin cùng model, khi trang đang mở" : "Trình duyệt không hỗ trợ WebRTC"],
   ];
   clear($("device-info"), rows.flatMap(([k, v]) => [h("dt", {}, k), h("dd", {}, v)]));
 }
 
 function renderModelStatus() {
   const d = state.detector;
+  renderFeedbackAvailable();
   clear(
     $("model-status"),
     d
@@ -776,6 +824,7 @@ function renderModelStatus() {
           {},
           h("span", { class: "mono" }, m.variant_id),
           h("span", { class: "muted small" }, fmt.mb(m.size_bytes)),
+          m.received_from ? h("span", { class: "muted small" }, `nhận từ ${m.received_from}`) : null,
           d?.variantId === m.variant_id
             ? badge("success", "đang dùng")
             : h("button", { class: "btn btn-ghost btn-sm", type: "button", onclick: () => useLocal(m.variant_id) }, "Dùng"),
@@ -850,7 +899,10 @@ function renderShare(status) {
     clear($("share"));
     return;
   }
-  clear($("share"), badge("info", `Chia sẻ P2P: ${status.peers} máy · ${status.served} miếng`, "share-network"));
+  const text = status.variant
+    ? `Đã gửi ${status.variant} cho ${status.receiver} · ${status.served} miếng`
+    : `Chia sẻ P2P: ${status.peers} máy`;
+  clear($("share"), badge("info", text, "share-network"));
 }
 
 async function renderHttpsHint() {
@@ -969,16 +1021,71 @@ function bindEvents() {
     if (state.photo && !state.live) detectPhoto(state.photo);
   });
   $("feedback-form").addEventListener("submit", sendFeedback);
+  $("stars").addEventListener("change", renderStars);
+  $("rename-btn").addEventListener("click", () => askName({ cancel: true }));
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) stopCamera();
   });
   window.addEventListener("pagehide", () => state.p2p?.goodbye());
 }
 
+function showName() {
+  $("device-id").textContent = state.name;
+  document.title = `${state.name} · PBL4 Phát hiện vật thể`;
+  renderDeviceInfo();
+}
+
+// Màn hình đặt tên máy: mở lần đầu, khi tên bị trùng, hoặc bấm Đổi tên. Tên được server chấp nhận
+// (hoặc server đang tắt) thì lưu lại và trả về.
+function askName({ error = null, cancel = false } = {}) {
+  const form = $("login-form");
+  const input = $("login-name");
+  input.value = state.name || "";
+  $("login-error").textContent = error || "";
+  $("login-cancel").hidden = !cancel;
+  document.body.classList.add("is-login");
+  $("login").hidden = false;
+  input.focus();
+  return new Promise((resolve) => {
+    const close = () => {
+      form.removeEventListener("submit", submit);
+      $("login-cancel").removeEventListener("click", close);
+      $("login").hidden = true;
+      document.body.classList.remove("is-login");
+      resolve();
+    };
+    const submit = async (event) => {
+      event.preventDefault();
+      const name = input.value.trim().replace(/\s+/g, " ");
+      if (!name) {
+        $("login-error").textContent = "Nhập tên cho máy này.";
+        return;
+      }
+      const previous = state.name;
+      state.name = name;
+      try {
+        await ensureRegistered(null);
+      } catch (err) {
+        if (err instanceof ApiError && err.code === "NAME_TAKEN") {
+          state.name = previous;
+          $("login-error").textContent = err.message;
+          return;
+        }
+        // server tắt: giữ tên, đăng ký khi xin model
+      }
+      lsSet(KEY_NAME, name);
+      showName();
+      close();
+    };
+    form.addEventListener("submit", submit);
+    $("login-cancel").addEventListener("click", close);
+  });
+}
+
 async function init() {
   state.deviceId = initDeviceId();
-  $("device-id").textContent = state.deviceId;
-  document.title = `${state.deviceId} · PBL4 Phát hiện vật thể`;
+  state.name = lsGet(KEY_NAME);
+  if (!state.name) document.body.classList.add("is-login"); // không nháy giao diện chính
   const savedMode = lsGet(KEY_MODE);
   const modeRadio = document.querySelector(`input[name="mode"][value="${savedMode}"]`);
   if (modeRadio) modeRadio.checked = true;
@@ -992,15 +1099,20 @@ async function init() {
   renderHttpsHint();
   await refreshLocal();
   loadVariants();
-
-  try {
-    await ensureRegistered(null);
-  } catch {
-    setConn(false);
-  }
   if (deviceInfo().webrtc) {
-    state.p2p = new P2P({ deviceId: state.deviceId, getBytes: getBytesForPeer, onChange: renderShare });
-    if (state.registered) state.p2p.start();
+    state.p2p = new P2P({ deviceId: state.deviceId, getName: () => state.name, getBytes: getBytesForPeer, onChange: renderShare });
+  }
+
+  if (!state.name) {
+    await askName();
+  } else {
+    showName();
+    try {
+      await ensureRegistered(null);
+    } catch (err) {
+      if (err instanceof ApiError && err.code === "NAME_TAKEN") await askName({ error: err.message });
+      else setConn(false);
+    }
   }
 
   // Lần trước đã dùng model nào thì nạp lại ngay từ kho trên máy (không cần server)

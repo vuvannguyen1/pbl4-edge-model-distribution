@@ -258,6 +258,8 @@ class UserFeedbackRecord(Base):
     actual_label: Mapped[str | None] = mapped_column(String(128), nullable=True)
     feedback_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     sentiment_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # sao × 0,2 + PhoBERT × 0,8
+    final_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     sentiment_label: Mapped[str | None] = mapped_column(String(64), nullable=True)
     sentiment_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     sentiment_engine: Mapped[str | None] = mapped_column(String(64), nullable=True)

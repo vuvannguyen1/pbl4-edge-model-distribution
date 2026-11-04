@@ -36,7 +36,7 @@ export function deviceInfo() {
   };
 }
 
-export async function register(deviceId) {
+export async function register(deviceId, displayName) {
   const info = deviceInfo();
   return api("/api/register", {
     method: "POST",
@@ -48,6 +48,7 @@ export async function register(deviceId) {
       ram_mb: info.ram_mb,
       runtime: info.runtime,
       peer_port: null, // trình duyệt không mở cổng; chia sẻ qua WebRTC
+      display_name: displayName,
       capabilities: {
         threads: info.threads,
         webgpu: !!navigator.gpu,
@@ -125,6 +126,7 @@ export async function download({ deviceId, resp, bandwidth, p2p, onProgress }) {
   let pendingBad = [];
   let fromPeer = 0;
   let fromServer = 0;
+  const peerCounts = {}; // peerId -> số miếng thực nhận, để báo "nhận model từ máy ..."
   let next = 0;
   let failed = null;
   let lastHave = 0;
@@ -175,6 +177,7 @@ export async function download({ deviceId, resp, bandwidth, p2p, onProgress }) {
         if (data && (await verify(data, item, item.url))) {
           out.set(data, item.offset);
           fromPeer++;
+          peerCounts[items[pos].peer] = (peerCounts[items[pos].peer] || 0) + 1;
           ok = true;
         } else if (data) {
           items[pos].bad = true;
@@ -223,5 +226,5 @@ export async function download({ deviceId, resp, bandwidth, p2p, onProgress }) {
     await reportHave(deviceId, resp, received, false, bandwidth, pendingBad);
     throw failed;
   }
-  return { bytes: out, downloadMs: performance.now() - start, fromPeer, fromServer, badChunks: pendingBad, notes };
+  return { bytes: out, downloadMs: performance.now() - start, fromPeer, fromServer, peerCounts, badChunks: pendingBad, notes };
 }

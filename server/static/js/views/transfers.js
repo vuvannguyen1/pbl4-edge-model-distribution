@@ -28,7 +28,7 @@ function listView(main) {
   main.append(
     pageHead(
       "Truyền model",
-      "Model được chia thành miếng 1 MiB. Thiết bị tải song song 4 miếng, một phần từ peer cùng lớp và phần còn lại từ server; miếng peer lỗi thì tự lấy lại từ server.",
+      "Model được chia thành miếng 1 MiB. Thiết bị tải song song 4 miếng; có máy khác đã có đủ model thì lấy toàn bộ từ máy đó, không thì lấy từ server; miếng peer lỗi thì tự lấy lại từ server.",
     ),
     list.el,
   );
@@ -49,7 +49,7 @@ function listView(main) {
         rows: data.requests,
         columns: [
           { key: "request_id", label: "Request", render: (r) => requestLink(r.request_id) },
-          { key: "device_id", label: "Thiết bị", render: (r) => h("span", { class: "mono" }, r.device_id) },
+          { key: "device_id", label: "Thiết bị", render: (r) => r.device_name },
           { key: "variant_id", label: "Variant", render: (r) => variantLink(r.variant_id) },
           { key: "received_count", label: "Tiến độ", render: (r) => progressBar(r.received_count, r.chunk_count) },
           { key: "plan", label: "Nguồn theo plan", sortable: false, render: (r) => sourceSplit(r.plan_counts) },
@@ -104,7 +104,7 @@ function detailView(main, rid) {
             "dl",
             { class: "dl-grid" },
             row("Trạng thái", requestStatus(r.status)),
-            row("Thiết bị", h("span", { class: "mono" }, `${r.device_id} (${r.device_class || "?"})`)),
+            row("Thiết bị", `${r.device_name} (${r.device_class || "?"})`),
             row("Variant", variantLink(r.variant_id)),
             row("Băng thông khai báo", bandwidthText(r)),
             row("Tốc độ server đo được", fmt.kbps(r.server_bandwidth_kbps)),
@@ -145,10 +145,11 @@ function detailView(main, rid) {
                   peers.map((origin) => {
                     const banned = r.plan.some((p) => p.origin === origin && p.origin_banned);
                     const kind = origin.startsWith("webrtc://") ? "WebRTC (trình duyệt)" : "HTTP (client Python)";
-                    return h("li", { class: banned ? "is-danger" : "is-neutral" }, h("span", { class: "mono" }, origin), ` · ${kind}`, banned ? " · đã bị cấm (gửi sai hash)" : "");
+                    const name = r.plan.find((p) => p.origin === origin)?.peer_name;
+                    return h("li", { class: banned ? "is-danger" : "is-neutral" }, name ? `${name} · ` : "", h("span", { class: "mono" }, origin), ` · ${kind}`, banned ? " · đã bị cấm (gửi sai hash)" : "");
                   }),
                 )
-              : h("p", { class: "small muted" }, "Không có peer nào cùng lớp đã có đủ model lúc lập plan."),
+              : h("p", { class: "small muted" }, "Không có máy nào đang online đã có đủ model này lúc lập plan."),
           );
         },
       }),

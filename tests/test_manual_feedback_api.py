@@ -9,7 +9,7 @@ from conftest import load_example
 from fastapi.testclient import TestClient
 from validate_examples import schema_errors
 
-from server.feedback import VariantStats, evaluate_manual
+from server.feedback import ManualFeedbackStore, VariantStats, evaluate_manual, final_score
 
 
 def manual(**overrides) -> dict:
@@ -24,8 +24,11 @@ def manual_lines(client: TestClient) -> list[dict]:
     return lines
 
 
-def test_manual_feedback_accepted_without_register(client: TestClient) -> None:
+def test_manual_feedback_accepted_without_register(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Không cần register/request_id: client có thể gửi bù sau khi server khởi động lại."""
+    fake_phobert(monkeypatch, 5)
     resp = client.post("/api/feedback", json=manual())
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -153,3 +156,104 @@ def test_evaluate_manual_verdicts_and_review() -> None:
         variant_id="v", correct=False, rating=1, stats=VariantStats().add(False, 1)
     )
     assert few["needs_review"] is False  # chưa đủ 5 lượt
+
+
+# ---------------------------------------------------------------- điểm tổng hợp
+
+
+def fake_phobert(monkeypatch: pytest.MonkeyPatch, score: int) -> list[str]:
+    calls: list[str] = []
+
+    def classify(text: str) -> dict:
+        calls.append(text)
+        return {"score": score, "label": "x", "confidence": 0.9, "text": text, "engine": "neural"}
+
+    monkeypatch.setattr("server.service.classify_user_feedback", classify)
+    return calls
+
+
+def test_final_score_uses_discrete_phobert_score() -> None:
+    assert final_score(4, 5) == 4.8
+    assert final_score(5, 1) == 1.8  # bình luận chiếm 80 %
+    assert final_score(1, 5) == 4.2
+    assert final_score(3, None) == 3.0  # không có bình luận: bằng số sao
+
+
+def test_comment_decides_verdict_and_is_stored(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_phobert(monkeypatch, 1)
+    body = client.post("/api/feedback", json=manual(rating=5, comment="sai hết")).json()
+    ev = body["evaluation"]
+    assert schema_errors("ManualFeedbackResponse", body) == []
+    assert ev["final_score"] == 1.8 and ev["comment_score"] == 1
+    assert ev["comment_engine"] == "neural"
+    assert ev["verdict"] == "negative"  # 5 sao nhưng bình luận rất xấu
+    assert "5 sao, bình luận 1/5, điểm 1.8" in ev["reason"]
+    assert manual_lines(client)[0]["evaluation"]["final_score"] == 1.8
+
+
+def test_no_comment_scores_stars_without_phobert(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = fake_phobert(monkeypatch, 1)
+    ev = client.post("/api/feedback", json=manual(rating=4, comment=None)).json()["evaluation"]
+    assert calls == []
+    assert ev["final_score"] == 4.0 and ev["comment_score"] is None
+    assert ev["verdict"] == "positive"
+
+
+def test_duplicate_is_not_scored_again(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = fake_phobert(monkeypatch, 5)
+    first = client.post("/api/feedback", json=manual(rating=4)).json()
+    again = client.post("/api/feedback", json=manual(rating=4)).json()
+    assert len(calls) == 1
+    assert again["status"] == "duplicate"
+    assert again["evaluation"]["final_score"] == first["evaluation"]["final_score"] == 4.8
+
+
+def test_rating_without_correct_or_detection(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Trang /app: chấm sao không cần đúng/sai, không cần khung hình nào."""
+    fake_phobert(monkeypatch, 4)
+    body = manual(rating=5, prediction=None, confidence=None, request_id=None, detected_at=None)
+    del body["correct"]
+    assert schema_errors("ManualFeedbackRequest", body) == []
+    resp = client.post("/api/feedback", json=body)
+    assert resp.status_code == 200, resp.text
+    assert schema_errors("ManualFeedbackResponse", resp.json()) == []
+    ev = resp.json()["evaluation"]
+    assert ev["final_score"] == 4.2 and ev["verdict"] == "positive"
+    assert ev["variant_correct_rate"] is None and ev["variant_avg_score"] == 4.2
+
+
+def test_low_average_score_needs_review(monkeypatch: pytest.MonkeyPatch) -> None:
+    stats = VariantStats()
+    for _ in range(5):
+        stats = stats.add(None, 5, 1.8)  # 5 sao nhưng bình luận rất xấu
+    result = evaluate_manual(variant_id="v", correct=None, rating=5, stats=stats, comment_score=1)
+    assert result["needs_review"] is True and result["variant_avg_score"] == 1.8
+    assert "cần xem lại" in result["reason"]
+
+
+def test_old_records_are_reloaded(tmp_path) -> None:
+    """Bản ghi cũ có `correct`, không có điểm tổng hợp: thống kê vẫn đúng sau khi khởi động lại."""
+    (tmp_path / "manual-feedback-20261103.jsonl").write_text(
+        json.dumps({"feedback_id": "a", "variant_id": "v", "rating": 4, "correct": True}) + "\n"
+        + json.dumps(
+            {
+                "feedback_id": "b",
+                "variant_id": "v",
+                "rating": 2,
+                "correct": None,
+                "evaluation": {"final_score": 3.0},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    store = ManualFeedbackStore(tmp_path)
+    stats = store._stats["v"]
+    assert stats.count == 2 and stats.judged == 1 and stats.correct_rate == 1.0
+    assert stats.avg_score == 3.5

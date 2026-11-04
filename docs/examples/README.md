@@ -1,6 +1,6 @@
 # File mẫu giao thức 1.0 (bài toán phát hiện vật thể)
 
-Kịch bản: `phoneB` (Android, 6 GB RAM) vào mạng sau `phoneA`. Hai máy cùng lớp `android_arm64_4-8gb`, `phoneA` đã có đủ `yolox_nano` (4 miếng), nên `phoneB` lấy 2 miếng từ `phoneA` và 2 miếng từ server.
+Kịch bản: `phoneB` (Android, 6 GB RAM) vào mạng sau `phoneA`. `phoneA` đã có đủ `yolox_nano` (4 miếng), nên `phoneB` lấy cả 4 miếng từ `phoneA`, không cần server; miếng lỗi thì lấy lại qua `fallback_url`. Hai máy khác cấu hình vẫn chia sẻ được, miễn là xin cùng model.
 
 | File | Tin nhắn |
 |---|---|
