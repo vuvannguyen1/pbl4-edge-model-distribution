@@ -10,6 +10,8 @@ import pytest
 from fastapi.testclient import TestClient
 from validate_examples import schema_errors
 
+from server.serve import banner
+
 WEB_RUNTIME = "onnxruntime-web 1.20.1"
 
 
@@ -17,6 +19,7 @@ def register_browser(
     client: TestClient,
     device_id: str,
     *,
+    display_name: str | None = None,
     platform: str = "android_browser",
     threads: int = 1,
     ram_mb: int = 4096,
@@ -31,6 +34,7 @@ def register_browser(
         "runtime": WEB_RUNTIME,
         "peer_port": None,
         "capabilities": {"threads": threads, "webgpu": False, "camera": True, "p2p": p2p},
+        "display_name": display_name,
     }
     assert schema_errors("RegisterRequest", body) == []
     resp = client.post("/api/register", json=body)
@@ -99,13 +103,23 @@ def test_short_and_legacy_links_redirect(client: TestClient) -> None:
 
 
 def test_links_json_and_admin_links(app_factory) -> None:
-    with TestClient(app_factory(https_port=8443, http_port=8000)) as client:
+    with TestClient(app_factory(https_port=8443, http_port=8000, link_ip="10.0.0.5")) as client:
         assert client.get("/app/links.json").json() == {"https_port": 8443}
         data = client.get("/admin-api/links").json()
     assert data["https_port"] == 8443 and data["http_port"] == 8000
-    kinds = [link["kind"] for link in data["links"]]
-    assert kinds[0] == "https" and "http" in kinds
-    assert all(link["url"].endswith("/app/") for link in data["links"])
+    assert data["url"] == "https://10.0.0.5:8443/app/"  # đúng một link, không liệt kê card ảo
+
+
+def test_client_link_is_http_without_https_port(app_factory) -> None:
+    with TestClient(app_factory(http_port=8000, link_ip="10.0.0.5")) as client:
+        assert client.get("/admin-api/links").json()["url"] == "http://10.0.0.5:8000/app/"
+
+
+def test_banner_prints_one_client_link_and_one_server_link() -> None:
+    text = banner("10.0.0.5", 8000, 8443)
+    assert text.count("/app/") == 1 and "https://10.0.0.5:8443/app/" in text
+    assert "http://10.0.0.5:8000/\n" in text
+    assert "http://10.0.0.5:8000/app/" in banner("10.0.0.5", 8000, None)
 
 
 # ---------------------------------------------------------------- chọn model theo chế độ
@@ -191,8 +205,7 @@ def test_webrtc_peer_only_when_online(client: TestClient) -> None:
     thread.join()
     peers = [p for p in plan if p["source"] == "peer"]
     assert [p["url"] for p in peers] == [
-        "webrtc://phoneA/chunks/yolox_nano/0",
-        "webrtc://phoneA/chunks/yolox_nano/1",
+        f"webrtc://phoneA/chunks/yolox_nano/{i}" for i in range(4)
     ]
     assert all(p["fallback_url"].endswith(f"/api/chunks/yolox_nano/{p['index']}") for p in peers)
 
@@ -284,3 +297,64 @@ def test_signal_requires_registered_devices(client: TestClient) -> None:
     register_browser(client, "phoneA")
     bad = {**msg, "from_device": "phoneA", "session": "có dấu"}
     assert client.post("/api/signal", json=bad).status_code == 400
+
+
+# ---------------------------------------------------------------- P2P khác cấu hình, tên máy
+
+
+def test_iphone_receives_from_android_with_peer_name(client: TestClient) -> None:
+    """bug.md: hai điện thoại khác cấu hình, cùng model vẫn P2P, và biết nhận từ máy nào."""
+    first = register_browser(client, "phoneA", display_name="Máy của Minh", ram_mb=8192)
+    announce_nano(client, "phoneA")
+    second = register_browser(client, "phoneB", platform="ios_browser", display_name="Lan")
+    assert first["device_class"] != second["device_class"]
+    thread = go_online(client, "phoneA")
+    resp = ask(client, "phoneB", preferred_variant="yolox_nano")
+    thread.join()
+    assert all(p["url"].startswith("webrtc://phoneA/") for p in resp["plan"])
+    assert resp["peers"] == [{"device_id": "phoneA", "name": "Máy của Minh"}]
+    assert "Máy của Minh đã có đủ yolox_nano" in resp["reason"]
+
+
+def test_display_name_shown_on_dashboard(client: TestClient) -> None:
+    register_browser(client, "phoneA", display_name="  Máy   của Minh ")
+    device = client.get("/admin-api/devices").json()["devices"][0]
+    assert device["name"] == "Máy của Minh"  # bỏ khoảng trắng thừa
+    ask(client, "phoneA")
+    assert client.get("/admin-api/requests").json()["requests"][0]["device_name"] == "Máy của Minh"
+
+
+def test_active_device_keeps_its_name(client: TestClient) -> None:
+    register_browser(client, "phoneA", display_name="Minh")
+    body = {
+        "protocol_version": "1.0",
+        "device_id": "phoneB",
+        "platform": "android_browser",
+        "cpu_arch": "arm64",
+        "ram_mb": 4096,
+        "runtime": WEB_RUNTIME,
+        "peer_port": None,
+        "display_name": "minh",  # không phân biệt hoa thường
+    }
+    resp = client.post("/api/register", json=body)
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "NAME_TAKEN"
+    assert schema_errors("Error", resp.json()) == []
+    # chính máy đó mở lại trang thì vẫn dùng được tên cũ
+    assert register_browser(client, "phoneA", display_name="Minh")
+    assert client.post("/api/register", json={**body, "display_name": "Lan"}).status_code == 200
+
+
+def test_blank_or_control_name_is_rejected(client: TestClient) -> None:
+    body = {
+        "protocol_version": "1.0",
+        "device_id": "phoneA",
+        "platform": "android_browser",
+        "cpu_arch": "arm64",
+        "ram_mb": 4096,
+        "runtime": WEB_RUNTIME,
+        "peer_port": None,
+    }
+    for name in ("   ", "a\nb", "x" * 33):
+        resp = client.post("/api/register", json={**body, "display_name": name})
+        assert resp.status_code == 400, name

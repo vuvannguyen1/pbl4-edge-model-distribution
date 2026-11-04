@@ -33,7 +33,8 @@
             "camera": {"type": "boolean"},
             "p2p": {"enum": ["webrtc", "http", "none"]}
           }
-        }
+        },
+        "display_name": {"description": "Tuỳ chọn. Tên người dùng đặt cho máy.", "type": ["string", "null"], "pattern": "^[^\\u0000-\\u001f\\u007f]{1,32}$"}
       }
     },
     "RegisterResponse": {
@@ -124,7 +125,17 @@
         "variant": {"$ref": "#/$defs/Variant"},
         "reason": {"type": "string"},
         "estimated_download_s": {"$ref": "#/$defs/NullableNonNeg"},
-        "plan": {"type": "array", "items": {"$ref": "#/$defs/PlanItem"}}
+        "plan": {"type": "array", "items": {"$ref": "#/$defs/PlanItem"}},
+        "peers": {
+          "description": "Tuỳ chọn. Các máy gửi miếng trong plan.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["device_id", "name"],
+            "properties": {"device_id": {"$ref": "#/$defs/DeviceId"}, "name": {"type": "string"}}
+          }
+        }
       }
     },
 
@@ -206,13 +217,13 @@
     "ManualFeedbackRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["feedback_id", "device_id", "variant_id", "rating", "correct", "prediction", "confidence", "expected_label", "comment", "request_id", "detected_at", "created_at"],
+      "required": ["feedback_id", "device_id", "variant_id", "rating", "prediction", "confidence", "expected_label", "comment", "request_id", "detected_at", "created_at"],
       "properties": {
         "feedback_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$"},
         "device_id": {"$ref": "#/$defs/DeviceId"},
         "variant_id": {"$ref": "#/$defs/VariantId"},
         "rating": {"type": "integer", "minimum": 1, "maximum": 5},
-        "correct": {"type": "boolean"},
+        "correct": {"type": ["boolean", "null"]},
         "prediction": {"type": ["string", "null"], "minLength": 1, "maxLength": 200},
         "confidence": {"$ref": "#/$defs/NullableRatio"},
         "expected_label": {"type": ["string", "null"], "minLength": 1, "maxLength": 200},
@@ -239,9 +250,13 @@
             "verdict": {"enum": ["positive", "neutral", "negative"]},
             "needs_review": {"type": "boolean"},
             "variant_feedback_count": {"type": "integer", "minimum": 1},
-            "variant_correct_rate": {"$ref": "#/$defs/Ratio"},
+            "variant_correct_rate": {"$ref": "#/$defs/NullableRatio"},
             "variant_avg_rating": {"type": "number", "minimum": 1, "maximum": 5},
-            "reason": {"type": "string"}
+            "variant_avg_score": {"type": ["number", "null"], "minimum": 1, "maximum": 5},
+            "reason": {"type": "string"},
+            "final_score": {"type": ["number", "null"], "minimum": 1, "maximum": 5},
+            "comment_score": {"type": ["integer", "null"], "minimum": 1, "maximum": 5},
+            "comment_engine": {"type": ["string", "null"]}
           }
         }
       }
@@ -297,7 +312,7 @@
           "additionalProperties": false,
           "required": ["code", "message"],
           "properties": {
-            "code": {"enum": ["BAD_REQUEST", "UNKNOWN_DEVICE", "UNKNOWN_VARIANT", "CHUNK_OUT_OF_RANGE", "VERSION_MISMATCH", "NO_VARIANT_FITS", "INTERNAL"]},
+            "code": {"enum": ["BAD_REQUEST", "UNKNOWN_DEVICE", "UNKNOWN_VARIANT", "CHUNK_OUT_OF_RANGE", "VERSION_MISMATCH", "NO_VARIANT_FITS", "NAME_TAKEN", "INTERNAL"]},
             "message": {"type": "string"}
           }
         }

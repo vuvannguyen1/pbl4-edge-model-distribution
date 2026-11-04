@@ -26,7 +26,7 @@ export default {
     main.append(
       pageHead(
         "Thiết bị & P2P",
-        "Hai thiết bị cùng lớp (cùng nền tảng, loại CPU, nhóm RAM) mới chia sẻ model cho nhau: trình duyệt qua WebRTC khi đang mở trang /app, client Python qua cổng HTTP.",
+        "Máy nào đã có đủ model thì gửi được cho máy khác xin cùng model, kể cả khác cấu hình: trình duyệt qua WebRTC khi đang mở trang /app, client Python qua cổng HTTP. Lớp thiết bị chỉ dùng để chọn model.",
       ),
       list.el,
     );
@@ -47,7 +47,7 @@ export default {
           rows: data.devices,
           columns: [
             // lớp thiết bị nằm dưới tên (không tách cột) để bảng vừa màn 1366 px
-            { key: "device_id", label: "Thiết bị / lớp", render: (d) => h("div", { class: "stack", style: "gap:2px" }, h("span", { class: "mono" }, d.device_id), h("span", { class: "mono small muted" }, d.device_class)) },
+            { key: "device_id", label: "Thiết bị / lớp", render: (d) => h("div", { class: "stack", style: "gap:2px" }, h("span", {}, d.name), h("span", { class: "mono small muted" }, d.name === d.device_id ? d.device_class : `${d.device_id} · ${d.device_class}`)) },
             { key: "last_seen_age_s", label: "Hoạt động", render: (d) => h("div", { class: "stack", style: "gap:4px" }, d.active ? badge("success", "Đang hoạt động", "wifi-high") : deviceActivity(d.last_seen_age_s), h("span", { class: "small muted" }, fmt.ago(d.last_seen_age_s))) },
             {
               key: "ram_mb",

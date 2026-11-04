@@ -110,7 +110,7 @@ function metricsTab(root) {
               rows: d.records,
               columns: [
                 { key: "timestamp", label: "Lúc", render: (r) => fmt.time(r.timestamp) },
-                { key: "device_id", label: "Thiết bị", render: (r) => h("span", { class: "mono" }, r.device_id) },
+                { key: "device_id", label: "Thiết bị", render: (r) => h("span", { class: "mono" }, r.device_name || r.device_id) },
                 { key: "variant_id", label: "Variant", render: (r) => variantLink(r.variant_id) },
                 { key: "download_ms", label: "Tải", align: "right", render: (r) => fmt.ms(r.download_ms) },
                 { key: "latency_ms_median", label: "Latency", align: "right", render: (r) => fmt.ms(r.latency_ms_median) },
@@ -145,21 +145,9 @@ function feedbackForm(onDone) {
   const rating = h(
     "fieldset",
     { class: "field", "aria-describedby": "fb-rating-error" },
-    h("legend", {}, "Điểm", h("span", { class: "req", "aria-hidden": "true" }, " *")),
+    h("legend", {}, "Số sao", h("span", { class: "req", "aria-hidden": "true" }, " *")),
     h("div", { class: "choice-row" }, [1, 2, 3, 4, 5].map((n) => h("label", { class: "choice" }, h("input", { type: "radio", name: "rating", value: String(n) }), h("span", {}, icon("star"), String(n))))),
     h("span", { class: "field-error", id: "fb-rating-error", "aria-live": "polite" }),
-  );
-  const correct = h(
-    "fieldset",
-    { class: "field", "aria-describedby": "fb-correct-error" },
-    h("legend", {}, "Dự đoán có đúng không?", h("span", { class: "req", "aria-hidden": "true" }, " *")),
-    h(
-      "div",
-      { class: "choice-row" },
-      h("label", { class: "choice" }, h("input", { type: "radio", name: "correct", value: "yes" }), h("span", {}, icon("thumbs-up"), "Đúng")),
-      h("label", { class: "choice" }, h("input", { type: "radio", name: "correct", value: "no" }), h("span", {}, icon("thumbs-down"), "Sai")),
-    ),
-    h("span", { class: "field-error", id: "fb-correct-error", "aria-live": "polite" }),
   );
   const submit = h("button", { class: "btn btn-primary", type: "submit" }, icon("paper-plane-tilt"), "Gửi đánh giá");
   const result = h("div", { "aria-live": "polite" });
@@ -184,7 +172,7 @@ function feedbackForm(onDone) {
       labelled(ids("prediction"), "Dự đoán của model", prediction),
       labelled(ids("expected"), "Nhãn thực tế", expected),
     ),
-    h("div", { class: "form-grid section-gap" }, rating, correct),
+    h("div", { class: "form-grid section-gap" }, rating),
     h("div", { class: "section-gap" }, labelled(ids("comment"), "Nhận xét", comment)),
     h("div", { class: "form-actions" }, submit, h("span", { class: "small muted" }, "Gửi qua POST /api/feedback, cùng đường với client.feedback_cli.")),
     result,
@@ -209,12 +197,10 @@ function feedbackForm(onDone) {
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const ratingValue = form.querySelector("input[name=rating]:checked")?.value;
-    const correctValue = form.querySelector("input[name=correct]:checked")?.value;
     const checks = [
       ["device", !device.value ? "Nhập mã thiết bị." : !/^[A-Za-z0-9_-]{1,32}$/.test(device.value) ? "Chỉ gồm chữ, số, _ và -, tối đa 32 ký tự." : null, device],
       ["variant", variant.value ? null : "Chọn variant.", variant],
-      ["rating", ratingValue ? null : "Chọn điểm từ 1 đến 5.", form.querySelector("input[name=rating]")],
-      ["correct", correctValue ? null : "Chọn Đúng hoặc Sai.", form.querySelector("input[name=correct]")],
+      ["rating", ratingValue ? null : "Chọn từ 1 đến 5 sao.", form.querySelector("input[name=rating]")],
     ];
     checks.forEach(([key, msg]) => setError(key, msg));
     const bad = checks.find(([, msg]) => msg);
@@ -234,10 +220,9 @@ function feedbackForm(onDone) {
           device_id: device.value,
           variant_id: variant.value,
           rating: Number(ratingValue),
-          correct: correctValue === "yes",
           prediction: text(prediction),
           confidence: null,
-          expected_label: text(expected) || (correctValue === "yes" ? text(prediction) : null),
+          expected_label: text(expected),
           comment: text(comment),
           request_id: null,
           detected_at: null,
@@ -297,8 +282,8 @@ function manualTab(root, ctx) {
               columns: [
                 { key: "variant_id", label: "Variant", render: (g) => variantLink(g.variant_id) },
                 { key: "variant_feedback_count", label: "Số đánh giá", align: "right" },
-                { key: "variant_correct_rate", label: "Tỉ lệ đúng", align: "right", render: (g) => fmt.pct(g.variant_correct_rate) },
-                { key: "variant_avg_rating", label: "Điểm TB", align: "right", render: (g) => `${fmt.num(g.variant_avg_rating)} / 5` },
+                { key: "variant_avg_score", label: "Điểm TB", align: "right", render: (g) => (g.variant_avg_score == null ? "—" : `${fmt.num(g.variant_avg_score, 2)} / 5`) },
+                { key: "variant_avg_rating", label: "Sao TB", align: "right", render: (g) => `${fmt.num(g.variant_avg_rating)} / 5` },
                 { key: "needs_review", label: "Tình trạng", render: (g) => (g.needs_review ? badge("warning", "Cần xem lại") : badge("success", "Ổn")) },
               ],
             })
@@ -314,10 +299,11 @@ function manualTab(root, ctx) {
               rows: d.records,
               columns: [
                 { key: "received_at", label: "Lúc", render: (r) => fmt.time(r.received_at) },
-                { key: "device_id", label: "Thiết bị", render: (r) => h("span", { class: "mono" }, r.device_id) },
+                { key: "device_id", label: "Thiết bị", render: (r) => h("span", { class: "mono" }, r.device_name || r.device_id) },
                 { key: "variant_id", label: "Variant", render: (r) => variantLink(r.variant_id) },
-                { key: "rating", label: "Điểm", align: "right", render: (r) => `${r.rating} / 5` },
-                { key: "correct", label: "Dự đoán", render: (r) => h("span", {}, r.correct ? badge("success", "Đúng") : badge("danger", "Sai"), " ", r.prediction || "") },
+                { key: "rating", label: "Sao", align: "right", render: (r) => `${r.rating} / 5` },
+                { key: "final_score", label: "Điểm", align: "right", sort: (r) => r.evaluation?.final_score ?? r.rating, render: (r) => fmt.num(r.evaluation?.final_score ?? r.rating, 2) },
+                { key: "correct", label: "Dự đoán", render: (r) => h("span", {}, r.correct == null ? null : r.correct ? badge("success", "Đúng") : badge("danger", "Sai"), " ", r.prediction || "") },
                 { key: "expected_label", label: "Nhãn thực tế", render: (r) => r.expected_label || "—" },
                 { key: "comment", label: "Nhận xét", sortable: false, render: (r) => h("span", { class: "wrap-anywhere" }, r.comment || "—") },
                 { key: "verdict", label: "Đánh giá", sortable: false, render: (r) => { const [k, t] = VERDICT[r.evaluation?.verdict] || ["neutral", "—"]; return badge(k, t); } },

@@ -5,7 +5,7 @@ Tài liệu này hướng dẫn từng bước chạy server, client, P2P và fa
 > **Bài toán hiện tại: phát hiện vật thể (10 model CV).** Cách demo chính là giao diện trình
 > duyệt: chạy `python -m server.serve`, mở link `https://<IP>:8443/app/` trên điện thoại (hoặc quét
 > QR ở dashboard), xem README mục *Bắt đầu nhanh*. Demo P2P giữa hai điện thoại: mở link trên máy
-> A, xin model và để trang mở; máy B cùng loại xin model sẽ nhận một nửa số miếng từ A (ô **P**
+> A, xin model và để trang mở; máy B xin cùng model (khác cấu hình cũng được) sẽ nhận toàn bộ miếng từ A (ô **P**
 > trên lưới miếng, dashboard → Truyền model). Các mục dưới đây là client Python (CLI).
 Mọi lệnh chạy từ **thư mục gốc repo** (`pbl4-edge-model-distribution`). Trên Linux,
 thay `\` bằng `/` và `set X=Y` bằng `export X=Y`.
@@ -136,7 +136,7 @@ client với `--follow-switch`; server trả `switch` sang bản nhỏ hơn và 
 
 ## 4. Demo P2P bằng hai client
 
-Hai client trên cùng một laptop có cùng `device_class`, nên demo được trên một máy.
+Hai client xin cùng model thì chia sẻ được, kể cả khác `device_class`, nên demo được trên một máy.
 Mỗi client cần `--device-id` và `--peer-port` khác nhau.
 
 Terminal 1 (server, giới hạn 2 Mbps để thấy rõ lợi ích P2P):
@@ -173,7 +173,7 @@ B in `Kế hoạch tải: 7 miếng từ peer, 7 miếng từ server` cùng đ�
 python -m client.agent --server http://localhost:8000 --device-id laptopC --image samples\dog.jpg --bandwidth 2000 --peer-port 0
 ```
 
-Server vẫn giao một nửa số miếng cho peer (vì A, B đã báo `complete`), nhưng peer không trả lời.
+Server vẫn giao toàn bộ miếng cho peer (vì A, B đã báo `complete`), nhưng peer không trả lời.
 C in `[cảnh báo] miếng i: peer http://...: không kết nối được (...)`, tải lại từ `fallback_url` của
 server, gửi các miếng lỗi trong `bad_chunks`, và vẫn hoàn tất với SHA-256 toàn file khớp.
 Sau đó server ghi `Ngừng giao peer ...` và không giao peer lỗi đó cho các lượt sau.

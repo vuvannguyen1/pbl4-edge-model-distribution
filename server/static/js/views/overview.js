@@ -15,8 +15,6 @@ import {
 
 // ---------------------------------------------------------------- link cho client
 
-let chosenLink = null; // link đang hiện QR (giữ qua các lượt vẽ lại)
-
 function copyButton(url) {
   if (!navigator.clipboard || !window.isSecureContext) return null; // http://<IP>: trình duyệt chặn clipboard
   return h(
@@ -30,60 +28,22 @@ function copyButton(url) {
   );
 }
 
-function renderLinks(data, redraw) {
-  const links = data.links;
-  if (!links.length) return emptyState("Không xác định được địa chỉ IP của máy server.");
-  if (!links.some((l) => l.url === chosenLink)) chosenLink = links[0].url;
-  const chosen = links.find((l) => l.url === chosenLink);
+function renderLink(link) {
   return h(
     "div",
     { class: "link-panel" },
     h(
       "figure",
       { class: "qr-box" },
-      qrCode(chosen.url, `Mã QR của ${chosen.url}`) || h("p", { class: "muted" }, "Không vẽ được mã QR."),
+      qrCode(link.url, `Mã QR của ${link.url}`) || h("p", { class: "muted" }, "Không vẽ được mã QR."),
       h("figcaption", { class: "small muted" }, "Quét bằng camera điện thoại"),
     ),
     h(
       "div",
       { class: "stack" },
-      h("p", { class: "link-main mono wrap-anywhere" }, chosen.url),
-      h("p", { class: "small" }, chosen.note),
-      h(
-        "ul",
-        { class: "link-list" },
-        links.map((l) =>
-          h(
-            "li",
-            {},
-            h(
-              "button",
-              {
-                class: `btn btn-sm ${l.url === chosenLink ? "btn-primary" : "btn-secondary"}`,
-                type: "button",
-                "aria-pressed": String(l.url === chosenLink),
-                onclick: () => {
-                  chosenLink = l.url;
-                  redraw();
-                },
-              },
-              l.kind === "https" ? icon("camera") : icon("image"),
-              l.kind === "https" ? "HTTPS" : "HTTP",
-            ),
-            h("span", { class: "mono small wrap-anywhere" }, l.url),
-            copyButton(l.url),
-          ),
-        ),
-      ),
-      data.https_port
-        ? null
-        : h(
-            "p",
-            { class: "state is-warning small" },
-            icon("warning"),
-            "Chưa có link HTTPS nên điện thoại chỉ chụp được từng ảnh. Bật server bằng python -m server.serve để có camera trực tiếp.",
-          ),
-      h("p", { class: "small muted" }, "Điện thoại/laptop phải cùng Wi-Fi hoặc hotspot với máy server. Mở link là tự đăng ký, xin model và dùng camera; không cần cài gì."),
+      h("p", { class: "row" }, h("span", { class: "link-main mono wrap-anywhere" }, link.url), copyButton(link.url)),
+      h("p", { class: "small" }, link.note),
+      h("p", { class: "small muted" }, "Điện thoại/laptop phải cùng mạng với máy server. Mở link là đặt tên máy, xin model và dùng camera; không cần cài gì."),
     ),
   );
 }
@@ -248,7 +208,7 @@ function renderRecent(data) {
             "tr",
             {},
             h("td", {}, requestLink(r.request_id)),
-            h("td", { class: "mono" }, r.device_id),
+            h("td", {}, r.device_name),
             h("td", {}, variantLink(r.variant_id)),
             h("td", { class: "num" }, bandwidthText(r)),
             h("td", {}, progressBar(r.received_count, r.chunk_count)),
@@ -284,10 +244,7 @@ export default {
       h("div", { class: "section-gap" }, recent.el),
     );
     const summary = shared(() => api("/admin-api/summary"));
-    const linksPanel = new Panel(linksCard.body, {
-      load: () => api("/admin-api/links"),
-      render: (data) => renderLinks(data, () => linksPanel.redraw()),
-    });
+    const linksPanel = new Panel(linksCard.body, { load: () => api("/admin-api/links"), render: renderLink });
     return {
       panels: [
         linksPanel,

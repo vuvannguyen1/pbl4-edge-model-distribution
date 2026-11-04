@@ -5,11 +5,10 @@ Kịch bản kiểm thử dùng các máy sau, tất cả chung một Wi-Fi ho�
 | Máy | Vai trò | Cần cài |
 |---|---|---|
 | **S** | Server + dashboard (laptop Windows) | Repo, Python |
-| **A**, **B** | Hai điện thoại **cùng loại** (cùng Android/iPhone, RAM cùng nhóm), dùng trình duyệt | Không cần cài gì |
-| **L1**, **L2** | (Tuỳ chọn) hai laptop cùng cấu hình chạy client Python | Repo, Python |
+| **A**, **B** | Hai điện thoại (khác cấu hình cũng được), dùng trình duyệt | Không cần cài gì |
+| **L1**, **L2** | (Tuỳ chọn) hai laptop chạy client Python | Repo, Python |
 
-- Thay `S_IP` bằng IP của máy S (xem dòng `Link cho điện thoại` khi bật server, hoặc `ipconfig`).
-  Bật **Mobile Hotspot** của Windows trên S thì `S_IP` luôn là `192.168.137.1`.
+- Thay `S_IP` bằng IP của máy S (xem dòng `Link cho client` khi bật server). IP đổi khi đổi mạng.
 - Lệnh trong khối `cmd` chạy ở cmd; lệnh trong khối `powershell` chạy ở PowerShell.
 - Mọi lệnh chạy tại thư mục gốc repo (`pbl4-edge-model-distribution`). Chữ tiếng Việt bị lỗi thì
   chạy `chcp 65001` trước.
@@ -43,6 +42,12 @@ máy đã có Git for Windows (có sẵn openssl):
 pip install cryptography
 ```
 
+**Máy S:** thư viện chấm bình luận bằng PhoBERT (thiếu thì server chấm theo từ khoá):
+
+```cmd
+pip install -e .[phobert]
+```
+
 **Máy S:** mở cổng 8000 (HTTP) và 8443 (HTTPS) (PowerShell chạy bằng quyền Administrator):
 
 ```powershell
@@ -70,10 +75,8 @@ Thấy gì:
 ```text
 ... Server sẵn sàng: protocol 1.0, 10 variant ready (...), selector rule-v1, giới hạn tốc độ không giới hạn, ...
 ========================================================================
- Link cho điện thoại (cùng Wi-Fi/hotspot với máy này):
-   https://S_IP:8443/app/                   camera trực tiếp (khuyên dùng)
-   http://S_IP:8000/app/                    chỉ chụp ảnh
- Dashboard (có mã QR của link): http://S_IP:8000/
+ Link cho client (điện thoại, laptop cùng mạng): https://S_IP:8443/app/
+ Link dashboard của server:                      http://S_IP:8000/
 ========================================================================
 ```
 
@@ -82,7 +85,8 @@ Thấy gì:
   là trạng thái sạch (feedback và log vẫn còn trong `data\`).
 - Lệnh cũ `uvicorn server.main:app --host 0.0.0.0 --port 8000` vẫn chạy nhưng chỉ có HTTP: điện
   thoại chỉ chụp được từng ảnh, không có camera trực tiếp.
-- Tuỳ chọn: `--port 8000 --https-port 8443`, `--no-https`.
+- Tuỳ chọn: `--port 8000 --https-port 8443`, `--no-https` (link client thành HTTP, chỉ chụp ảnh),
+  `--ip <IP>` khi link in sai IP (máy có nhiều card mạng như VMware).
 
 ---
 
@@ -91,12 +95,13 @@ Thấy gì:
 | Bước | Thao tác trên A | Thấy gì |
 |---|---|---|
 | 1 | Quét mã QR trên dashboard, hoặc gõ `https://S_IP:8443/app/` | Lần đầu: "Kết nối không riêng tư" (chứng chỉ tự ký) → **Nâng cao → Tiếp tục** |
-| 2 | Tab **Model**, chọn **Camera trực tiếp**, bấm **Xin model** | 6 bước đều ✓: đăng ký (lớp `android_browser_arm64_...`), đo băng thông, xin model (`yolox_nano`), tải 4 miếng có SHA-256, lưu vào máy, nạp model (4 luồng) |
-| 3 | Đọc "Lý do server chọn", mở "Vì sao không chọn model khác" | Ngân sách 200 ms/khung; `yolox_x/l`, RetinaNet bị loại vì "không chạy được trên onnxruntime-web" |
-| 4 | Trang tự sang tab **Camera**, bấm **Bật camera**, cho phép camera | Khung + tên vật thể tiếng Việt (người, chai, cốc, điện thoại...), số ms và khung/giây ở góc dưới |
-| 5 | **Đổi camera**, kéo **Ngưỡng tin cậy**, chọn **Chỉ hiện: người** | Đổi camera trước/sau, lọc vật thể |
-| 6 | **Chụp ảnh** (mở camera của máy) hoặc **Chọn ảnh** | Ảnh tĩnh kèm khung |
-| 7 | Tải lại trang | Tab Model: "Đang dùng yolox_nano", **không tải lại** (model lưu trong trình duyệt) |
+| 2 | Nhập tên máy (ví dụ `Máy của Minh`), bấm **Vào** | Vào giao diện chính, tên hiện trên đầu trang. Đổi tên ở thẻ **Máy này** |
+| 3 | Tab **Model**, chọn **Camera trực tiếp**, bấm **Xin model** | 6 bước đều ✓: đăng ký (lớp `android_browser_arm64_...`), đo băng thông, xin model (`yolox_nano`), tải 4 miếng có SHA-256, lưu vào máy, nạp model (4 luồng) |
+| 4 | Đọc "Lý do server chọn", mở "Vì sao không chọn model khác" | Ngân sách 200 ms/khung; `yolox_x/l`, RetinaNet bị loại vì "không chạy được trên onnxruntime-web" |
+| 5 | Trang tự sang tab **Camera**, bấm **Bật camera**, cho phép camera | Khung + tên vật thể tiếng Việt (người, chai, cốc, điện thoại...), số ms và khung/giây ở góc dưới |
+| 6 | **Đổi camera**, kéo **Ngưỡng tin cậy**, chọn **Chỉ hiện: người** | Đổi camera trước/sau, lọc vật thể |
+| 7 | **Chụp ảnh** (mở camera của máy) hoặc **Chọn ảnh** | Ảnh tĩnh kèm khung |
+| 8 | Tải lại trang | Không hỏi lại tên. Tab Model: "Đang dùng yolox_nano", **không tải lại** (model lưu trong trình duyệt) |
 
 Trên dashboard (S) lúc này:
 
@@ -112,16 +117,18 @@ Trên dashboard (S) lúc này:
 
 | Thao tác | Thấy gì |
 |---|---|
-| Tab Camera → **Đánh giá khung này** | Sang tab **Đánh giá** với khung hình đã chụp kèm khung vật thể |
-| Chọn điểm 1–5, Đúng / Sai, (vật thể thực tế, nhận xét) → **Gửi đánh giá** | "Server đã nhận", "Đánh giá: Tích cực/Trung tính/Tiêu cực" |
+| Tab **Đánh giá** (có model là dùng được ngay, không cần chụp khung hình) | Form chọn sao, nhận xét |
+| Chọn 4 sao, nhận xét `rất tốt` → **Gửi đánh giá** | "Server đã nhận", "Đánh giá: Tích cực", `Điểm 4,8 / 5 · 4 sao, bình luận 5/5` |
+| Chọn 5 sao, nhận xét `sai hết` → **Gửi đánh giá** | Bình luận kéo điểm xuống: `Điểm 1,8 / 5`, "Đánh giá: Tiêu cực" |
+| (Tuỳ chọn) Tab Camera → **Đánh giá khung này** | Sang tab Đánh giá, gửi kèm khung hình và kết quả nhận diện |
 | Dashboard → **Đánh giá model** | Đánh giá vừa gửi, thống kê theo model, FPS camera |
 
 ---
 
 ## 4. P2P giữa hai điện thoại A và B (WebRTC)
 
-Điều kiện: A và B **cùng lớp thiết bị** (xem cột "Thiết bị / lớp" ở dashboard → Thiết bị & P2P),
-xin **cùng model**, và A **đang mở trang** `/app`.
+Điều kiện: A và B xin **cùng model** và A **đang mở trang** `/app`. Hai máy khác cấu hình vẫn chia
+sẻ được: có máy đã có model thì lấy toàn bộ từ máy đó, server không phải gửi gì.
 
 **Máy S:** tắt server, bật lại với giới hạn 3 Mbps để thấy rõ lợi ích P2P:
 
@@ -133,9 +140,9 @@ python -m server.serve
 | Bước | Thao tác | Thấy gì |
 |---|---|---|
 | 1 | Trên A: mở link, tab Model → **Xoá** model cũ (danh sách "Model đã lưu trên máy"), chọn **Ảnh chụp**, **Xin model**; **để nguyên trang mở** | A tải `yolox_tiny` (20 miếng) từ server, khoảng 55 giây |
-| 2 | Trên B: mở link, chọn **Ảnh chụp**, **Xin model** | Bước "Tải từng miếng": `10 miếng từ server, 10 từ máy khác (P2P)`; lưới miếng có ô **P** (sọc) xen ô **S**; lý do có câu "... cùng lớp ... đã có đủ yolox_tiny, nên lấy miếng [0-9] từ peer" |
-| 3 | Nhìn header trang A | Huy hiệu "Chia sẻ P2P: 1 máy · 10 miếng" |
-| 4 | Dashboard → **Truyền model** → lượt của B | Lưới miếng nửa P nửa S, peer `webrtc://<máy A> · WebRTC (trình duyệt)` |
+| 2 | Trên B: mở link, chọn **Ảnh chụp**, **Xin model** | Bước "Tải từng miếng": `0 miếng từ server, 20 từ máy khác (P2P)`; lưới toàn ô **P** (sọc); thông báo "Bạn đã nhận được mô hình yolox_tiny từ máy ..."; danh sách model ghi "nhận từ máy ..." |
+| 3 | Nhìn header trang A | Huy hiệu "Đã gửi yolox_tiny cho <tên máy B> · 20 miếng" |
+| 4 | Dashboard → **Truyền model** → lượt của B | Lưới toàn P, peer `<tên máy A> · webrtc://... · WebRTC (trình duyệt)` |
 
 **Demo khi peer tắt:** đóng trang trên A, rồi trên B xóa model và xin lại. Server không giao A làm
 peer nữa (dashboard: A "Đã đóng trang"), B tải đủ 20 miếng từ server.
@@ -144,7 +151,7 @@ Nếu không thấy P2P:
 
 | Dấu hiệu | Cách xử lý |
 |---|---|
-| B: `20 miếng từ server`, không có P | A và B khác lớp thiết bị (khác loại máy hoặc RAM khác nhóm), hoặc trang A đã đóng/khóa màn hình. Mở lại trang A rồi xin lại trên B |
+| B: `20 miếng từ server`, không có P | Trang A đã đóng hoặc khoá màn hình, hoặc hai máy xin khác model. Mở lại trang A rồi xin lại trên B |
 | A và B được chọn model khác nhau | Tab Model → Tuỳ chọn nâng cao → **Model muốn dùng**: chọn cùng `yolox_tiny` trên cả hai |
 | B báo "Peer ...: không nối được tới ...; lấy các miếng đó từ server" | Hotspot/router chặn hai máy nói chuyện trực tiếp. B vẫn tải xong từ server (đúng thiết kế dự phòng) |
 | B: "đã có trên máy, không tải lại" | B còn model cũ: bấm **Xoá** trong "Model đã lưu trên máy" rồi xin lại |
@@ -236,7 +243,7 @@ Model tải về nằm ở `data\client\<device_id>\<variant_id>\` (file `.onnx`
 | Máy chưa có model | `python -m client.agent --server http://S_IP:8000 --device-id laptopZ --peer-port 0 --image samples\dog.jpg` | `chưa thể detect offline vì máy chưa có model phù hợp` |
 | Làm hỏng model | `echo x>> data\client\laptopA\yolox_s\yolox_s.onnx` rồi chạy lại lệnh agent | Báo `invalid`. Bật S rồi chạy lại thì client tải lại model |
 
-### 7.4 P2P giữa hai laptop L1, L2 (HTTP, cùng cấu hình)
+### 7.4 P2P giữa hai laptop L1, L2 (HTTP)
 
 **L1 và L2:** xóa model cũ. **Máy S:** bật server với `set PBL4_RATE_LIMIT_KBPS=3000` như mục 4.
 
@@ -261,9 +268,9 @@ Test-NetConnection L1_IP -Port 9000
 python -m client.agent --server http://S_IP:8000 --device-id laptopB --image samples\dog.jpg --mode none --bandwidth 3000 --peer-port 9100
 ```
 
-Kết quả mong đợi: L2 bước 2 có `device_class` giống L1; bước 4 `Kế hoạch tải: 10 miếng từ peer,
-10 miếng từ server` (`yolox_tiny`); bước 5 các dòng `← peer` xen `← server`, đều `sha256 OK`;
-L1 in `[peer] gửi miếng ...`. Ctrl+C trên L1 rồi chạy L2 với `--device-id laptopC --peer-port 0`:
+Kết quả mong đợi: L2 bước 4 `Kế hoạch tải: 20 miếng từ peer` (`yolox_tiny`); bước 5 các dòng
+`← peer`, đều `sha256 OK`, rồi `Nguồn model : nhận yolox_tiny từ máy laptopA`; L1 in
+`[peer] gửi miếng ...`. Ctrl+C trên L1 rồi chạy L2 với `--device-id laptopC --peer-port 0`:
 L2 báo peer không kết nối được, tải lại từ server và vẫn xong.
 
 ---

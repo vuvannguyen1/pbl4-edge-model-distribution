@@ -98,6 +98,7 @@ def _migrate_legacy_columns(engine: Engine) -> None:
             "sentiment_confidence": "FLOAT",
             "sentiment_engine": "VARCHAR(64)",
             "feedback_reason": "VARCHAR(64)",
+            "final_score": "FLOAT",
         },
     }
     inspector = inspect(engine)

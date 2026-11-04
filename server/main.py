@@ -24,6 +24,7 @@ from fastapi.responses import JSONResponse as _BaseJSONResponse
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
+from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import MutableHeaders
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -397,7 +398,10 @@ def create_app(settings: Settings | None = None, selector: ModelSelector | None 
         data = await read_json(request)
         # có feedback_id: đánh giá thủ công từ client.feedback_cli; không có: số đo của agent
         if isinstance(data, dict) and "feedback_id" in data:
-            return _json(service.manual_feedback(parse_model(ManualFeedbackRequest, data)))
+            # chạy ở luồng riêng: lần đầu nạp PhoBERT mất vài giây, không được chặn event loop
+            # (đang stream miếng model và long-poll signaling)
+            req = parse_model(ManualFeedbackRequest, data)
+            return _json(await run_in_threadpool(service.manual_feedback, req))
         return _json(service.feedback(parse_model(FeedbackRequest, data)))
 
     @app.post("/api/announce")

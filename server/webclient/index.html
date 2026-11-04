@@ -14,6 +14,31 @@
   </head>
   <body>
     <a class="skip-link" href="#main">Bỏ qua, tới nội dung chính</a>
+
+    <section class="login" id="login" aria-labelledby="login-title" hidden>
+      <form class="card login-card" id="login-form" novalidate>
+        <div class="card-body stack">
+          <p class="brand">
+            <svg class="icon icon-lg" aria-hidden="true"><use href="/ui/shared/icons/sprite.svg#i-camera"></use></svg>
+            <span>PBL4 Camera</span>
+          </p>
+          <div>
+            <h1 id="login-title">Đặt tên cho máy của bạn</h1>
+            <p class="muted">Tên này hiện cho máy khác khi hai máy chia sẻ model, để biết model đến từ máy nào.</p>
+          </div>
+          <div class="field">
+            <label for="login-name">Tên máy</label>
+            <input id="login-name" class="input" maxlength="32" autocomplete="nickname" placeholder="Ví dụ: iPhone của Minh" aria-describedby="login-error" />
+            <span class="field-error" id="login-error" aria-live="polite"></span>
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-primary btn-lg" type="submit">Vào</button>
+            <button class="btn btn-secondary" type="button" id="login-cancel" hidden>Huỷ</button>
+          </div>
+        </div>
+      </form>
+    </section>
+
     <header class="m-top">
       <div class="m-top-inner">
         <p class="brand">
@@ -110,6 +135,7 @@
 
             <div id="progress" class="stack" hidden aria-live="polite">
               <div id="steps"></div>
+              <div id="source-note"></div>
               <div id="reason" class="small reason" hidden></div>
               <div id="download-view" class="stack"></div>
               <ul id="notes" class="notes small"></ul>
@@ -119,7 +145,10 @@
         </section>
 
         <section class="card" aria-labelledby="device-title">
-          <div class="card-header"><h2 id="device-title">Máy này</h2></div>
+          <div class="card-header">
+            <h2 id="device-title">Máy này</h2>
+            <button class="btn btn-secondary btn-sm" type="button" id="rename-btn">Đổi tên</button>
+          </div>
           <div class="card-body"><dl class="dl-grid" id="device-info"></dl></div>
         </section>
 
@@ -127,7 +156,7 @@
           <div class="card-header">
             <div>
               <h2 id="local-title">Model đã lưu trên máy</h2>
-              <p>Khi trang mở, máy cùng loại có thể tải model này trực tiếp từ đây (P2P).</p>
+              <p>Khi trang mở, máy khác xin cùng model sẽ tải trực tiếp từ đây (P2P).</p>
             </div>
           </div>
           <div class="card-body" id="local-list"></div>
@@ -209,16 +238,16 @@
           <div class="card-header">
             <div>
               <h1 id="feedback-title">Đánh giá kết quả</h1>
-              <p>Đánh giá khung hình đã chụp; server dùng để chọn model tốt hơn cho các máy cùng loại.</p>
+              <p>Chấm model đang dùng. Muốn gửi kèm kết quả nhận diện thì bấm "Đánh giá khung này" ở tab Camera.</p>
             </div>
           </div>
           <div class="card-body stack">
-            <div id="snap-empty" class="state">
+            <div id="feedback-empty" class="state">
               <p class="state-title">
                 <svg class="icon" aria-hidden="true"><use href="/ui/shared/icons/sprite.svg#i-info"></use></svg>
-                Chưa có khung hình nào
+                Máy chưa có model
               </p>
-              <p>Ở tab Camera, bấm "Đánh giá khung này" hoặc chụp một ảnh.</p>
+              <p>Sang tab Model và bấm Xin model trước.</p>
             </div>
             <figure class="snapshot" id="snap" hidden>
               <canvas id="snapshot" role="img" aria-label="Khung hình đang đánh giá"></canvas>
@@ -226,30 +255,25 @@
             </figure>
 
             <form class="stack" id="feedback-form" novalidate hidden>
+              <p class="mono small" id="feedback-model"></p>
               <fieldset class="field">
-                <legend>Điểm (1 kém – 5 tốt)</legend>
-                <div class="choice-row">
-                  <label class="choice"><input type="radio" name="rating" value="1" /><span>1</span></label>
-                  <label class="choice"><input type="radio" name="rating" value="2" /><span>2</span></label>
-                  <label class="choice"><input type="radio" name="rating" value="3" /><span>3</span></label>
-                  <label class="choice"><input type="radio" name="rating" value="4" /><span>4</span></label>
-                  <label class="choice"><input type="radio" name="rating" value="5" /><span>5</span></label>
+                <legend>Số sao</legend>
+                <div class="stars" id="stars">
+                  <label data-value="1"><input type="radio" name="rating" value="1" aria-label="1 sao" /><span aria-hidden="true">★</span></label>
+                  <label data-value="2"><input type="radio" name="rating" value="2" aria-label="2 sao" /><span aria-hidden="true">★</span></label>
+                  <label data-value="3"><input type="radio" name="rating" value="3" aria-label="3 sao" /><span aria-hidden="true">★</span></label>
+                  <label data-value="4"><input type="radio" name="rating" value="4" aria-label="4 sao" /><span aria-hidden="true">★</span></label>
+                  <label data-value="5"><input type="radio" name="rating" value="5" aria-label="5 sao" /><span aria-hidden="true">★</span></label>
                 </div>
               </fieldset>
-              <fieldset class="field">
-                <legend>Model nhận đúng vật thể không?</legend>
-                <div class="choice-row">
-                  <label class="choice"><input type="radio" name="correct" value="yes" /><span>Đúng</span></label>
-                  <label class="choice"><input type="radio" name="correct" value="no" /><span>Sai / bỏ sót</span></label>
-                </div>
-              </fieldset>
-              <div class="field">
-                <label for="expected">Vật thể thực tế (nếu sai hoặc bỏ sót)</label>
-                <input id="expected" name="expected" class="input" maxlength="200" autocomplete="off" />
-              </div>
               <div class="field">
                 <label for="comment">Nhận xét</label>
-                <textarea id="comment" name="comment" class="input" rows="3" maxlength="1000"></textarea>
+                <textarea id="comment" name="comment" class="input" rows="3" maxlength="1000" aria-describedby="comment-hint"></textarea>
+                <span class="hint" id="comment-hint">Điểm = số sao × 0,2 + điểm bình luận × 0,8. Không bình luận thì điểm bằng số sao.</span>
+              </div>
+              <div class="field">
+                <label for="expected">Vật thể thực tế (nếu model nhận sai hoặc bỏ sót)</label>
+                <input id="expected" name="expected" class="input" maxlength="200" autocomplete="off" />
               </div>
               <div class="form-actions">
                 <button class="btn btn-primary" type="submit" id="feedback-btn">

@@ -25,6 +25,12 @@ dev = [
     "httpx",
 ]
 
+# chấm bình luận bằng PhoBERT trên server; thiếu thì server chấm theo từ khoá (engine "lexicon")
+phobert = [
+    "torch",
+    "transformers",
+]
+
 # huấn luyện/huấn luyện lại ML Selector (selector/train.py, selector/retrain.py)
 ml = [
     "joblib",

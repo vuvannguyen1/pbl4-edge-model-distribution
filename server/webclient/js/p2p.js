@@ -47,8 +47,10 @@ function withTimeout(promise, ms, message) {
 
 export class P2P {
   // getBytes(variantId) -> Promise<Uint8Array|null>: byte model trong kho của máy này
-  constructor({ deviceId, getBytes, onChange }) {
+  // getName() -> tên người dùng đặt cho máy, gửi kèm offer để máy kia biết đang gửi cho ai
+  constructor({ deviceId, getName, getBytes, onChange }) {
     this.deviceId = deviceId;
+    this.getName = getName;
     this.getBytes = getBytes;
     this.onChange = onChange || (() => {});
     this.running = false;
@@ -56,6 +58,8 @@ export class P2P {
     this.serving = new Map(); // session -> {peer, pc, channel}
     this.served = 0; // số miếng đã gửi cho máy khác
     this.peers = new Set(); // các máy từng tải từ máy này
+    this.receiver = null; // tên máy nhận gần nhất
+    this.variant = null; // model vừa gửi
   }
 
   // ------------------------------------------------------------ signaling
@@ -118,8 +122,9 @@ export class P2P {
 
   async answerOffer(msg) {
     const pc = new RTCPeerConnection({ iceServers: [] });
-    this.serving.set(msg.session, { peer: msg.from_device, pc, channel: null });
-    pc.ondatachannel = (event) => this.serveChannel(msg.session, msg.from_device, event.channel);
+    const peerName = msg.data.name || msg.from_device;
+    this.serving.set(msg.session, { peer: peerName, pc, channel: null });
+    pc.ondatachannel = (event) => this.serveChannel(msg.session, peerName, event.channel);
     pc.onconnectionstatechange = () => {
       if (["failed", "closed", "disconnected"].includes(pc.connectionState)) this.closeServing(msg.session);
     };
@@ -161,6 +166,8 @@ export class P2P {
       channel.send(bytes.subarray(start, start + Math.min(PIECE_BYTES, req.size - pos)));
     }
     this.served += 1;
+    this.receiver = peer;
+    this.variant = req.variant;
     this.onChange(this.status());
   }
 
@@ -177,7 +184,13 @@ export class P2P {
   }
 
   status() {
-    return { connected: this.serving.size, peers: this.peers.size, served: this.served };
+    return {
+      connected: this.serving.size,
+      peers: this.peers.size,
+      served: this.served,
+      receiver: this.receiver,
+      variant: this.variant,
+    };
   }
 
   // ------------------------------------------------------------ máy nhận (đang tải model)
@@ -196,7 +209,7 @@ export class P2P {
     try {
       await pc.setLocalDescription(await pc.createOffer());
       await iceComplete(pc);
-      const sent = await this.send({ to_device: peerId, type: "offer", session, data: { sdp: pc.localDescription.toJSON() } });
+      const sent = await this.send({ to_device: peerId, type: "offer", session, data: { sdp: pc.localDescription.toJSON(), name: this.getName() } });
       if (!sent.delivered) throw new Error(`${peerId} không còn mở trang`);
       const answer = await withTimeout(answered, CONNECT_TIMEOUT_MS, `${peerId} không trả lời`);
       await pc.setRemoteDescription(answer.sdp);

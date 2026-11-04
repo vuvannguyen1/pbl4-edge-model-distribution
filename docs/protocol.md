@@ -51,7 +51,7 @@ Client                                Server                       Client khác 
 |---|---|---|---|
 | `protocol_version` | string | có | Luôn là `"1.0"` |
 | `device_id` | string | có | Tên máy (xem quy ước) |
-| `platform` | string | có | Một trong: `android`, `android_browser`, `ios_browser`, `windows`, `linux` |
+| `platform` | string | có | Một trong: `android`, `android_browser`, `ios_browser`, `web_desktop`, `windows`, `linux` |
 | `cpu_arch` | string | có | Kết quả `uname -m` (ví dụ `aarch64`) hoặc `x86_64` |
 | `ram_mb` | integer | có | Tổng RAM của máy |
 | `runtime` | string | có | Thư viện chạy model và phiên bản, ví dụ `onnxruntime 1.25.1` |
@@ -63,7 +63,7 @@ Client                                Server                       Client khác 
 |---|---|---|
 | `protocol_version` | string | `"1.0"` |
 | `device_id` | string | Lặp lại `device_id` |
-| `device_class` | string | Lớp cấu hình, xem mục 7. Các máy cùng lớp nhận cùng phiên bản và được ghép P2P |
+| `device_class` | string | Lớp cấu hình, xem mục 7. Dùng để chọn phiên bản; việc ghép P2P theo model, không theo lớp (mục 10.3) |
 | `chunk_size` | integer | 1048576 |
 | `peer_enabled` | boolean | `true` nếu server sẽ chỉ máy khác đến lấy miếng từ máy này |
 
@@ -225,7 +225,7 @@ hay đăng ký lại, vì client có thể gửi bù sau khi server khởi độ
 | `feedback_id` | string | Mã vừa nhận |
 | `status` | string | `accepted`: ghi mới. `duplicate`: đã nhận trước đó, không ghi lại |
 | `received_at` | string | Lúc server nhận lần đầu |
-| `evaluation` | object | `verdict` (`positive`/`neutral`/`negative`), `needs_review` (model có ≥ 5 lượt mà đúng < 50 %), thống kê của model và `reason` |
+| `evaluation` | object | `verdict` (`positive`/`neutral`/`negative`), `needs_review` (model có ≥ 5 lượt mà đúng < 50 %), thống kê của model, `reason`, và điểm lượt này: `comment_score` (PhoBERT, số nguyên 1..5), `comment_engine` (`neural`, hoặc `lexicon` khi thiếu PhoBERT), `final_score` = `rating` × 0,2 + `comment_score` × 0,8; không có `comment` thì `final_score` = `rating`. `verdict`: `negative` nếu sai hoặc điểm ≤ 2,5, `positive` nếu đúng và điểm ≥ 3,5 |
 
 Server ghi mỗi đánh giá một dòng trong `data/feedback/manual-feedback-YYYYMMDD.jsonl` và một
 dòng log (thời gian nhận, thiết bị, model, kết quả đánh giá).
@@ -245,6 +245,7 @@ Mọi lỗi trả về cùng một dạng (`examples/09_error.json`):
 | 404 | `UNKNOWN_VARIANT` | `variant_id` không có trong Registry hoặc chưa ở trạng thái `ready` |
 | 404 | `CHUNK_OUT_OF_RANGE` | `index` < 0 hoặc ≥ `chunk_count` |
 | 409 | `VERSION_MISMATCH` | `protocol_version` khác `"1.0"` |
+| 409 | `NAME_TAKEN` | `display_name` đang được một máy khác hoạt động dùng (không phân biệt hoa thường) |
 | 422 | `NO_VARIANT_FITS` | Không phiên bản nào vừa hạn và dung lượng |
 | 500 | `INTERNAL` | Lỗi phía server |
 
@@ -292,8 +293,13 @@ Mọi trường dưới đây là **tuỳ chọn**: client 1.0 không gửi thì
 | `camera` | boolean | Dùng được camera trực tiếp (cần HTTPS) |
 | `p2p` | string | `webrtc` (trình duyệt), `http` (có `peer_port`) hoặc `none` |
 
+`POST /api/register` nhận thêm `display_name` (tuỳ chọn, tối đa 32 ký tự, có dấu được): tên người
+dùng đặt cho máy, để biết model đến từ máy nào. Đây chỉ là nhãn, không phải đăng nhập; `device_id`
+vẫn là định danh. Máy không đặt tên thì hiện `device_id`. Hai máy đang hoạt động (liên lạc trong
+30 giây hoặc đang mở trang) không được trùng tên.
+
 `platform` thêm giá trị `web_desktop` (trình duyệt trên laptop/PC). Trình duyệt và client Python
-luôn khác lớp thiết bị (khác `platform`), nên không bao giờ được ghép P2P với nhau.
+dùng hai cách truyền khác nhau nên không ghép P2P với nhau.
 
 ### 10.2 Chọn model theo chế độ dùng và khối `detection`
 
@@ -322,6 +328,13 @@ Cài đặt tham chiếu: `client/detection.py` (Python), `server/webclient/js/w
 
 ### 10.3 P2P giữa trình duyệt: WebRTC
 
+Server ghép P2P **theo model, không theo lớp thiết bị**: cùng variant là cùng một file và mỗi miếng
+đều được kiểm SHA-256, nên hai máy khác cấu hình vẫn chia sẻ được. Peer hợp lệ là máy khác đã có đủ
+variant, đang online, cùng cách truyền (trình duyệt với trình duyệt, Python với Python) và chưa bị
+cấm. Có peer thì **mọi miếng** trong `plan` lấy từ peer, chia đều nếu có nhiều máy; `fallback_url`
+để lấy lại từ server khi peer lỗi. `ModelResponse` có thêm `peers` (`[{device_id, name}]`) để client
+báo nguồn nhận model.
+
 Trình duyệt không mở cổng được, nên miếng đi qua WebRTC DataChannel, server chỉ làm signaling:
 
 | Endpoint | Ý nghĩa |
@@ -345,4 +358,5 @@ trình duyệt không có nghĩa peer hỏng.
 | 1.0 | 13/10/2026 | Bản đầu tiên cho task Implement |
 | 1.0 | 14/10/2026 | Sửa tài liệu, **không đổi định dạng tin nhắn**: server dùng Python FastAPI; danh mục model là Registry `registry/model_registry.json` thay cho `models/manifest.json`; `UNKNOWN_VARIANT` áp dụng cả với phiên bản chưa `ready`; cập nhật phân công |
 | 1.0 | 04/11/2026 | Chuyển sang bài toán phát hiện vật thể (10 model CV). Chỉ **thêm trường tuỳ chọn**, client cũ không vỡ: `capabilities`, `mode`, `target_fps`, khối `detection` và chất lượng `map50_95`, `platform` `web_desktop`, peer `webrtc://`, `/api/announce`, `/api/signal` (mục 10) |
+| 1.0 | 04/11/2026 | Theo `bug.md`, vẫn chỉ thêm trường tuỳ chọn: P2P ghép theo model (bỏ điều kiện cùng lớp) và lấy toàn bộ miếng từ peer; `display_name`, `NAME_TAKEN`, `peers`; đánh giá có `correct` tuỳ chọn, `final_score` |
 | 1.0 | 14/10/2026 | **Bổ sung, tương thích ngược**: `/api/feedback` nhận thêm đánh giá của người dùng (có `feedback_id`, mẫu 10 và 11); các tin nhắn cũ giữ nguyên |

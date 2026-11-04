@@ -280,6 +280,9 @@ class Agent:
             f"{result.chunks_from_peer} từ peer, {result.chunks_reused} dùng lại, "
             f"{len(result.bad_chunks)} lần lỗi"
         )
+        peers = [p["name"] for p in response.get("peers") or []]
+        if result.chunks_from_peer and peers:
+            self.out(f"  Nguồn model    : nhận {variant['id']} từ máy {', '.join(peers)}")
         return result.path, result
 
     def step_inference(
