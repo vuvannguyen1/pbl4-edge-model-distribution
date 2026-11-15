@@ -7,10 +7,6 @@ import json
 import sys
 from pathlib import Path
 
-# Ensure UTF-8 output on Windows console
-if sys.stdout.encoding != 'utf-8':
-    sys.stdout.reconfigure(encoding='utf-8')
-
 import joblib
 import pandas as pd
 
@@ -33,7 +29,7 @@ def load_model_specs() -> dict:
             "precision": entry.get("precision", "fp32"),
         }
     if not specs:
-        raise ValueError("Registry khÃ´ng cÃ³ object_detection variant ready")
+        raise ValueError("Registry không có object_detection variant ready")
     return specs
 
 _MODEL_PATH = Path(__file__).resolve().parent / "artifacts" / "selector_model.joblib"
@@ -102,7 +98,6 @@ def select_model(register_data: dict, request_data: dict) -> dict:
     # 3. AI Inference
     predicted_variant = pipeline.predict(input_df)[0]
     probabilities = pipeline.predict_proba(input_df)[0]
-    classes = pipeline.classes_
     confidence = float(max(probabilities))
 
     # 4. Safety Guard / Fallback theo thiết kế hệ thống
@@ -160,6 +155,9 @@ def select_model(register_data: dict, request_data: dict) -> dict:
 
 
 if __name__ == "__main__":
+    # Ensure UTF-8 output on Windows console
+    if sys.stdout.encoding != 'utf-8':
+        sys.stdout.reconfigure(encoding='utf-8')
     # Test mẫu bằng chính gói tin JSON trong Protocol 1.0
     sample_reg = {
         "protocol_version": "1.0",

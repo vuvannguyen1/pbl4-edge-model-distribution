@@ -1,17 +1,16 @@
-from __future__ import annotations
-import sys
-if hasattr(sys.stdout, 'reconfigure'):
-    sys.stdout.reconfigure(encoding='utf-8')
 """
 user_feedback.py
 Client đóng gói feedback của người dùng và gửi về Server.
 """
+from __future__ import annotations
 
 import argparse
 import json
 import sys
 from typing import Any
+
 import requests
+
 
 def send_user_feedback(
     server_url: str,
@@ -45,6 +44,8 @@ def send_user_feedback(
 
 
 def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Gửi đánh giá feedback khách hàng về server")
     parser.add_argument("--server", default="http://127.0.0.1:8000", help="Địa chỉ server")
     parser.add_argument("--device-id", default="laptopA", help="ID thiết bị")

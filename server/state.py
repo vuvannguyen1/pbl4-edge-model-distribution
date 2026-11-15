@@ -1,6 +1,6 @@
 """Trạng thái phân phối trong RAM: request_id, tiến độ chunk, variant thiết bị đã có.
 
-Trạng thái mất khi khởi động lại server (Version 1 không có database).
+Trạng thái mất khi khởi động lại server (CSDL trong `server/db/` chỉ lưu lịch sử, không nạp lại).
 Mọi thao tác đều khóa bằng threading.Lock vì handler có thể chạy song song.
 """
 

@@ -73,4 +73,5 @@ def test_retrain_correction_logic() -> None:
         "score": 1,
     }
     corrected = correct_variant(bad_record)
-    assert corrected == "mobilenetv2_int8"
+    # resnet50_fp32 không còn trong Registry: dạy sang bản nhỏ nhất của catalog hiện tại
+    assert corrected == "yolox_nano"

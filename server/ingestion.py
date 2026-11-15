@@ -144,11 +144,6 @@ def ingest_model(
     level = int(metadata.get("level", metadata.get("compression_level", 0)))
     top1_accuracy = float(metadata.get("top1_accuracy", 0.0))
     version = str(metadata.get("version", "1.0")).strip()
-    source_provider = metadata.get("source_provider")
-    source_model_id = metadata.get("source_model_id")
-    source_revision = metadata.get("source_revision")
-    source_format = metadata.get("source_format")
-    distribution_format = metadata.get("distribution_format", "onnx")
 
     if not variant_id or not model_id:
         raise IngestionError("Metadata phải có 'variant_id' và 'model_id'.")

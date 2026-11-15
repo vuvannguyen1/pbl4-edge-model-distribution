@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import Any
@@ -13,12 +12,9 @@ from sqlalchemy.orm import Session, joinedload
 from server.db.models import (
     DeviceRecord,
     DistributionRequestRecord,
-    ModelArtifactRecord,
-    ModelChunkRecord,
     ModelFamilyRecord,
     ModelVariantRecord,
     PerformanceFeedbackRecord,
-    TaskRecord,
     UserFeedbackRecord,
     SelectorWeightRecord,
 )

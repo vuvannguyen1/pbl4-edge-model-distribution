@@ -180,16 +180,6 @@ class Classifier:
         )
 
 
-def run_inference(
-    model_path: Path,
-    image_path: Path,
-    variant: dict[str, Any],
-    labels: list[str],
-    runs: int = 20,
-) -> InferenceResult:
-    return Classifier(model_path, variant, labels).classify(image_path, runs)
-
-
 class DetectionRunner:
     """Model phát hiện vật thể với cùng giao diện `Classifier` (load_ms, classify)."""
 

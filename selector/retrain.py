@@ -4,20 +4,14 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-import joblib
-import pandas as pd
-from lightgbm import LGBMClassifier
-from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder
+
+from training.train_selector import ROOT, best_alternative, load_catalog, train
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("selector.retrain")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FEEDBACK_LOG_PATH = REPO_ROOT / "data" / "user_feedbacks.jsonl"
-DATASET_PATH = REPO_ROOT / "selector" / "training_data" / "selector_synthetic_dataset.csv"
-MODEL_PATH = REPO_ROOT / "selector" / "artifacts" / "selector_model.joblib"
 
 
 def correct_variant(record: dict) -> str:

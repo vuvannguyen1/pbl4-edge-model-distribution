@@ -72,6 +72,18 @@ class FeedbackResult:
         }
 
 
+MODEL_DIR = Path(__file__).resolve().parent / "artifacts" / "phobert_5class"
+# Vị trí cũ của model (trước khi chuyển vào selector/artifacts/)
+LEGACY_MODEL_DIR = Path(__file__).resolve().parent.parent / "data" / "phanloaicamxuc" / "model"
+
+
+def local_model_dir() -> Path:
+    """Thư mục PhoBERT đã fine-tune; chỉ dùng vị trí cũ khi vị trí chính chưa có."""
+    if not MODEL_DIR.is_dir() and LEGACY_MODEL_DIR.is_dir():
+        return LEGACY_MODEL_DIR
+    return MODEL_DIR
+
+
 def _normalize_text(text: str) -> str:
     text = unicodedata.normalize("NFC", text.strip().lower())
     text = re.sub(r"[!?,.:;\-~_]+", " ", text)
@@ -88,14 +100,7 @@ class FeedbackClassifier:
         if use_neural:
             try:
                 from transformers import pipeline
-                default_dir = (
-                    Path(__file__).resolve().parent / "artifacts" / "phobert_5class"
-                )
-                legacy_dir = (
-                    Path(__file__).resolve().parent.parent / "data" / "phanloaicamxuc" / "model"
-                )
-                if not default_dir.is_dir() and legacy_dir.is_dir():
-                    default_dir = legacy_dir
+                default_dir = local_model_dir()
                 model_id = model_name or str(default_dir)
                 if model_name is None and not default_dir.is_dir():
                     raise FileNotFoundError(
@@ -161,11 +166,7 @@ _default_classifier: FeedbackClassifier | None = None
 def get_classifier() -> FeedbackClassifier:
     global _default_classifier
     if _default_classifier is None:
-        local_model = Path(__file__).resolve().parent / "artifacts" / "phobert_5class"
-        legacy_model = Path(__file__).resolve().parent.parent / "data" / "phanloaicamxuc" / "model"
-        if not local_model.is_dir() and legacy_model.is_dir():
-            local_model = legacy_model
-        _default_classifier = FeedbackClassifier(use_neural=local_model.is_dir())
+        _default_classifier = FeedbackClassifier(use_neural=local_model_dir().is_dir())
     return _default_classifier
 
 
