@@ -53,7 +53,7 @@ training = [
 ]
 
 [tool.setuptools]
-packages = ["server", "server.db", "server.routes", "client", "selector", "training"]
+packages = ["server", "server.db", "server.feedback", "server.routes", "client", "selector", "training"]
 
 [tool.setuptools.package-data]
 # giao diện web: HTML/CSS/JS/font/icon tĩnh, không cần build
