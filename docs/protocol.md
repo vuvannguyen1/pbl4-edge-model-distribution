@@ -275,7 +275,7 @@ Ví dụ: `android_arm64_4-8gb`, `ios_browser_arm64_4-8gb`. Tách theo `platform
 | Huấn luyện Model Selector: mô hình chọn phiên bản model nén theo cấu hình thiết bị và băng thông tại thời điểm yêu cầu | Huỳnh Tấn Lực | Mục 3 (`/api/request`), 5 (feedback làm dữ liệu huấn luyện), 7 (`device_class`) |
 | Code server và client: các endpoint, giới hạn tốc độ, lập kế hoạch P2P, Registry, bộ chọn rule-based dự phòng, agent client, đo đạc | Nguyễn Văn Vũ | Mục 1 đến 8 |
 
-Model Selector của Lực được gắn vào server qua một interface chung. Khi Selector chưa sẵn sàng hoặc trả lỗi, server dùng bộ chọn rule-based (theo `tong_quan_he_thong.md`, mục 7.5), nên việc huấn luyện không chặn luồng phân phối.
+Model Selector của Lực được gắn vào server qua một interface chung. Khi Selector chưa sẵn sàng hoặc trả lỗi, server dùng bộ chọn rule-based (theo `docs/design/tong_quan_he_thong.md`, mục 7.5), nên việc huấn luyện không chặn luồng phân phối.
 
 ## 10. Mở rộng cho phát hiện vật thể và client trình duyệt
 
@@ -358,5 +358,5 @@ trình duyệt không có nghĩa peer hỏng.
 | 1.0 | 13/10/2026 | Bản đầu tiên cho task Implement |
 | 1.0 | 14/10/2026 | Sửa tài liệu, **không đổi định dạng tin nhắn**: server dùng Python FastAPI; danh mục model là Registry `registry/model_registry.json` thay cho `models/manifest.json`; `UNKNOWN_VARIANT` áp dụng cả với phiên bản chưa `ready`; cập nhật phân công |
 | 1.0 | 04/11/2026 | Chuyển sang bài toán phát hiện vật thể (10 model CV). Chỉ **thêm trường tuỳ chọn**, client cũ không vỡ: `capabilities`, `mode`, `target_fps`, khối `detection` và chất lượng `map50_95`, `platform` `web_desktop`, peer `webrtc://`, `/api/announce`, `/api/signal` (mục 10) |
-| 1.0 | 04/11/2026 | Theo `bug.md`, vẫn chỉ thêm trường tuỳ chọn: P2P ghép theo model (bỏ điều kiện cùng lớp) và lấy toàn bộ miếng từ peer; `display_name`, `NAME_TAKEN`, `peers`; đánh giá có `correct` tuỳ chọn, `final_score` |
+| 1.0 | 04/11/2026 | Theo `docs/notes/bug.md`, vẫn chỉ thêm trường tuỳ chọn: P2P ghép theo model (bỏ điều kiện cùng lớp) và lấy toàn bộ miếng từ peer; `display_name`, `NAME_TAKEN`, `peers`; đánh giá có `correct` tuỳ chọn, `final_score` |
 | 1.0 | 14/10/2026 | **Bổ sung, tương thích ngược**: `/api/feedback` nhận thêm đánh giá của người dùng (có `feedback_id`, mẫu 10 và 11); các tin nhắn cũ giữ nguyên |

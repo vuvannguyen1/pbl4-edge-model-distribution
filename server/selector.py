@@ -1,6 +1,6 @@
 """Model Selector Version 1: bộ lọc cứng, rule-based baseline và fallback.
 
-Luồng chọn (tong_quan_he_thong.md, mục 7.1):
+Luồng chọn (docs/design/tong_quan_he_thong.md, mục 7.1):
 
     Registry (status=ready) -> apply_hard_filters() -> ModelSelector.select()
 

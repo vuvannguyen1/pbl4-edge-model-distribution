@@ -1,4 +1,4 @@
-"""Tải đủ model ONNX trong data/model_sources.json vào models/CV/.
+"""Tải đủ model ONNX trong metadata/model_sources.json vào models/CV/.
 
 Chạy từ thư mục gốc repo:
     python tools/download_models.py
@@ -48,7 +48,7 @@ def main() -> int:
     repo_root = Path(__file__).resolve().parent.parent
     target_dir = repo_root / "models" / "CV"
     target_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path = repo_root / "data" / "model_sources.json"
+    manifest_path = repo_root / "metadata" / "model_sources.json"
     entries: list[dict[str, Any]] = json.loads(manifest_path.read_text(encoding="utf-8"))
     if len(entries) != 10:
         print(f"[LỖI] Manifest phải có đúng 10 model CV, hiện có {len(entries)}")

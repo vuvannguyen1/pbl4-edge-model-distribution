@@ -490,5 +490,5 @@ def create_report(output_path: Path):
 
 
 if __name__ == "__main__":
-    out_file = Path(__file__).resolve().parent.parent / "docs" / "Bao_Cao_Danh_Gia_Chi_Tiet_Backend_PBL4.docx"
+    out_file = Path(__file__).resolve().parent / "Bao_Cao_Danh_Gia_Chi_Tiet_Backend_PBL4.docx"
     create_report(out_file)

@@ -60,7 +60,7 @@ Lần đầu mở link, người dùng đặt tên cho máy (hai máy đang ho�
 
 Mọi lệnh chạy trong `cmd` tại thư mục gốc repo (Windows). Chạy `chcp 65001` trước nếu chữ tiếng
 Việt bị lỗi. Ví dụ dưới dùng server ở `http://127.0.0.1:8000`; chạy trên hai máy thì thay bằng IP
-LAN của máy server, ví dụ `http://192.168.137.1:8000` (xem [docs/run_demo.md](docs/run_demo.md)
+LAN của máy server, ví dụ `http://192.168.137.1:8000` (xem [docs/guides/run_demo.md](docs/guides/run_demo.md)
 mục 7 về hotspot và firewall).
 
 ### 1. Cài đặt (một lần)
@@ -255,7 +255,7 @@ Trên Termux: chạy cùng lệnh rồi mở `http://127.0.0.1:8080` bằng trì
 | Tải lại model từ đầu | `rmdir /s /q data\client\laptopB` rồi chạy lại `client.agent` |
 
 Hướng dẫn demo đầy đủ (các mức băng thông, P2P, fallback, nhận diện offline, hotspot, đọc log,
-lỗi hay gặp): **[docs/run_demo.md](docs/run_demo.md)**.
+lỗi hay gặp): **[docs/guides/run_demo.md](docs/guides/run_demo.md)**.
 
 Kiểm thử: `python -m pytest -q`.
 
@@ -416,11 +416,12 @@ Client sẽ tự đăng ký thông số thiết bị qua `/api/register`, xin mo
 |---|---|
 | `server/` | FastAPI app, Registry, Selector, Planner, token bucket, feedback; `admin_api.py` + `static/` là dashboard `/ui`; `webclient/` là giao diện client `/app`; `signaling.py` signaling WebRTC; `serve.py` lệnh bật server + HTTPS + in link |
 | `client/` | Agent CLI, detect offline, chọn ảnh, theo dõi server, downloader, inference (`detection.py`: giải mã 4 định dạng model phát hiện vật thể), peer HTTP; `web_ui.py` + `web/` là giao diện web cho client Python |
-| `metadata/model_cards/` | Model Card của 10 model CV (sinh bằng `tools/curate_detection_registry.py`) |
+| `metadata/` | `model_cards/`: Model Card của 10 model CV (sinh bằng `tools/curate_detection_registry.py`); `model_sources.json`: nguồn tải và SHA-256 của 10 model |
 | `client/web/shared/` | CSS, font, icon, JS dùng chung cho cả hai giao diện web (xem `docs/design-system.md`) |
-| `design-system/` | Kết quả gốc của skill ui-ux-pro-max |
 | `registry/`, `models/` | Registry sinh tự động, file `.onnx` (không commit) |
-| `tools/` | Tải model, sinh Registry, tải nhãn/ảnh, kiểm file mẫu giao thức |
-| `docs/` | Giao thức, schema, gói mẫu, hướng dẫn demo, báo cáo triển khai |
+| `selector/` | `feedback_classifier.py` chấm nhận xét (server dùng lúc chạy); `predict.py`, `retrain.py`, `train.py` là ML Selector thử nghiệm; `artifacts/` chứa PhoBERT và model selector |
+| `training/`, `notebooks/` | Script và notebook huấn luyện ML Selector, PhoBERT |
+| `tools/` | Tải model, sinh Registry, tải nhãn/ảnh, kiểm file mẫu giao thức, đồng bộ `data/` vào CSDL |
+| `docs/` | `protocol.md`, `protocol.schema.json`, `examples/`: giao thức; `guides/`: lệnh và kịch bản demo (`lenh.md`, `run_demo.md`); `design/`: tài liệu thiết kế và yêu cầu; `reports/`: báo cáo triển khai; `notes/`; `design-system.md` + `design-system/`: giao diện; `ai-skills/`: hướng dẫn cho AI khi viết Version 1 |
 | `tests/` | Bộ test `pytest` |
 | `data/` | Log, feedback, cache client (sinh lúc chạy, không commit) |

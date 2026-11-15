@@ -15,5 +15,5 @@ File `.onnx` không commit vào Git. Sau khi clone/pull, chạy từ thư mục 
 python tools\download_models.py
 ```
 
-Script đọc `data/model_sources.json`, tải đủ 10 model và kiểm tra kích thước cùng SHA-256.
+Script đọc `metadata/model_sources.json`, tải đủ 10 model và kiểm tra kích thước cùng SHA-256.
 Các model khác domain phải nằm trong thư mục domain tương ứng, ví dụ `models/NLP`.

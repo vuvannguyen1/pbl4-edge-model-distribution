@@ -11,7 +11,7 @@
   python "G:/Ky5Nam3/PBL4/.claude/skills/ui-ux-pro-max/scripts/search.py" "analytics dashboard data-dense light" --design-system --persist -p "PBL4 Edge Distribution" --density 8 --motion 2 --variance 3 --output-dir .
   ```
 
-  Kết quả gốc của skill: [`design-system/pbl4-edge-distribution/MASTER.md`](../design-system/pbl4-edge-distribution/MASTER.md).
+  Kết quả gốc của skill: [`docs/design-system/MASTER.md`](design-system/MASTER.md).
 - Tra bổ sung: `--domain color` (palette sáng), `--domain style` (Data-Dense Dashboard),
   `--domain chart` (so sánh danh mục, tiến độ), `--domain ux` (bảng, trạng thái live, loading/rỗng/lỗi),
   `--domain google-fonts` (font có bộ ký tự `vietnamese`), `--domain icons`.
