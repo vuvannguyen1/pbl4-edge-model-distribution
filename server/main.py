@@ -28,9 +28,8 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import MutableHeaders
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from server.admin_api import MODEL_CARDS_DIR
 from server.admin_api import router as admin_router
-from server.config import PROTOCOL_VERSION, Settings
+from server.config import MODEL_CARDS_DIR, PROTOCOL_VERSION, Settings
 from server.errors import ProtocolError, bad_request, error_body
 from server.ratelimit import TokenBucket
 from server.registry import Registry

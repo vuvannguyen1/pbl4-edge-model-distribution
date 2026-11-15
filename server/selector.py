@@ -24,40 +24,16 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 
 from server.registry import RegistryVariant
+from server.textfmt import (  # noqa: F401 - giữ đường import cũ
+    BYTES_PER_MB,
+    download_seconds,
+    estimate_download_s,
+    fmt_num,
+    quality_number,
+    quality_text,
+)
 
 logger = logging.getLogger("pbl4.server.selector")
-
-BYTES_PER_MB = 1024 * 1024
-
-
-def fmt_num(value: float, digits: int = 1) -> str:
-    """60.0 -> "60", 41.27 -> "41.3", fmt_num(18.5, 2) -> "18.5": số gọn cho câu lý do."""
-    text = f"{round(float(value), digits):.{digits}f}"
-    return text.rstrip("0").rstrip(".") if "." in text else text
-
-
-def download_seconds(size_bytes: int, bandwidth_kbps: float) -> float:
-    """Thời gian tải = size_bytes × 8 / 1000 / bandwidth_kbps (1 kbps = 1000 bit/s)."""
-    return size_bytes * 8 / 1000 / bandwidth_kbps
-
-
-def estimate_download_s(size_bytes: int, bandwidth_kbps: float | None) -> float | None:
-    if not bandwidth_kbps:
-        return None
-    return round(download_seconds(size_bytes, bandwidth_kbps), 1)
-
-
-def quality_number(variant: RegistryVariant) -> str:
-    """mAP dạng phần trăm ("25.8 %"), top-1 giữ dạng cũ ("0.7180")."""
-    if variant.map50_95 is not None:
-        return f"{variant.map50_95 * 100:.1f} %"
-    return f"{variant.top1_accuracy:.4f}"
-
-
-def quality_text(variant: RegistryVariant) -> str:
-    """Chất lượng cho câu lý do: "mAP 25.8 %" hoặc "top-1 0.7180"."""
-    return f"{variant.quality_label} {quality_number(variant)}"
-
 
 # Model cần tối đa nửa RAM thiết bị: phần còn lại cho hệ điều hành, trình duyệt, camera
 RAM_SHARE = 0.5

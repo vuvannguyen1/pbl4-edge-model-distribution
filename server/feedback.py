@@ -16,9 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from server.registry import RegistryVariant
-from server.selector import download_seconds, fmt_num, quality_text
-
-BYTES_PER_MB = 1024 * 1024
+from server.textfmt import BYTES_PER_MB, download_seconds, fmt_num, quality_text
 
 
 @dataclass(frozen=True)

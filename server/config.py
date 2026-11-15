@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+# Model Card của từng variant (sinh bằng tools/curate_detection_registry.py)
+MODEL_CARDS_DIR = REPO_ROOT / "metadata" / "model_cards"
 
 CHUNK_SIZE = 1024 * 1024  # 1 MiB, theo Protocol 1.0
 PROTOCOL_VERSION = "1.0"

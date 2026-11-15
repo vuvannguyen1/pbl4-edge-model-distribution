@@ -30,7 +30,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 from starlette.concurrency import run_in_threadpool
 
-from server.config import PROTOCOL_VERSION, REPO_ROOT, Settings
+from server.config import MODEL_CARDS_DIR, PROTOCOL_VERSION, Settings
 from server.db import (
     ModelVariantRecord,
     get_feedback_statistics,
@@ -46,7 +46,6 @@ from server.state import DownloadRequest, url_origin
 
 logger = logging.getLogger("pbl4.server.admin")
 
-MODEL_CARDS_DIR = REPO_ROOT / "metadata" / "model_cards"
 METRICS_PATTERN = "feedback-*.jsonl"
 MANUAL_PATTERN = "manual-feedback-*.jsonl"
 FEEDBACK_KINDS = ("metrics", "manual", "text")

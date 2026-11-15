@@ -47,12 +47,11 @@ from server.selector import (
     NoVariantFits,
     SelectionContext,
     apply_hard_filters,
-    estimate_download_s,
-    fmt_num,
     no_fit_message,
 )
 from server.signaling import SignalHub
 from server.state import DownloadRequest, StateStore, url_origin
+from server.textfmt import estimate_download_s, fmt_num
 
 logger = logging.getLogger("pbl4.server")
 
