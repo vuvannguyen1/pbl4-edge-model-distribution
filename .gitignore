@@ -227,6 +227,8 @@ data/
 !data/
 data/*
 !data/model_sources.json
+# Ban sao du lieu cua mot lan demo (docs/demo_0411.md), sinh luc chay
+data_demo/
 *.part
 *.onnx
 
