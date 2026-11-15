@@ -32,8 +32,8 @@ from pathlib import Path
 from typing import Any
 
 from client.api import TASK
+from client.paths import BYTES_PER_MB
 
-BYTES_PER_MB = 1024 * 1024
 META_FILE = "variant.json"  # metadata cạnh file model
 ACTIVE_FILE = "active.json"  # variant đang dùng, ở gốc cache_dir
 

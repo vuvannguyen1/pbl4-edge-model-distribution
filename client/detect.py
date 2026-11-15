@@ -28,7 +28,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from client.agent import DEFAULT_LABELS, REPO_ROOT
 from client.device_info import runtime_string
 from client.feedback import save_last_detection
 from client.inference import (
@@ -40,12 +39,8 @@ from client.inference import (
     is_detection,
 )
 from client.model_cache import META_FILE, ModelCache
+from client.paths import CLIENT_DATA, DEFAULT_LABELS, EXIT_ERROR, EXIT_OK, IMAGE_SUFFIXES
 from client.picker import pick_images
-
-CLIENT_DATA = REPO_ROOT / "data" / "client"
-IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
-EXIT_OK = 0
-EXIT_ERROR = 1
 
 Printer = Callable[[str], None]
 

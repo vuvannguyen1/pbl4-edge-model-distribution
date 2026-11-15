@@ -24,6 +24,8 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
+from client.device_info import peak_ram_mb
+
 COCO_LABELS = [
     "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat",
     "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog",
@@ -329,8 +331,6 @@ class Detector:
     def detect(
         self, image_path: Path, runs: int = 5, threshold: float = DEFAULT_THRESHOLD
     ) -> DetectionResult:
-        from client.inference import peak_ram_mb
-
         with Image.open(image_path) as img:
             detections, latencies = self.detect_image(img, threshold, runs)
         return DetectionResult(

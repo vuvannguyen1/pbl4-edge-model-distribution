@@ -30,16 +30,9 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 import requests
 
-from client.agent import (
-    DEFAULT_LABELS,
-    REPO_ROOT,
-    Agent,
-    AgentConfig,
-    AgentError,
-    AgentResult,
-)
+from client.agent import Agent, AgentConfig, AgentError, AgentResult
 from client.api import ApiClient, ApiError, build_manual_feedback, normalize_server_url
-from client.device_info import collect_device_info, default_device_id, sanitize_device_id
+from client.device_info import collect_device_info, device_id_from_arg
 from client.downloader import DownloadError
 from client.feedback import (
     STATUS_PENDING,
@@ -48,20 +41,21 @@ from client.feedback import (
     new_feedback_id,
     utc_now,
 )
-from client.feedback_cli import (
-    _VARIANT_ID,
+from client.feedback_input import (
     MAX_COMMENT,
     MAX_LABEL,
+    VARIANT_ID_PATTERN,
     FeedbackInputError,
     check_text,
     parse_rating,
 )
 from client.model_cache import ModelCache, load_active, read_meta
 from client.monitor import server_reachable
+from client.paths import DEFAULT_LABELS, IMAGE_SUFFIXES, REPO_ROOT, default_cache_dir
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 SAMPLES_DIR = REPO_ROOT / "samples"
-IMAGE_TYPES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+IMAGE_TYPES = IMAGE_SUFFIXES
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 REACHABLE_TTL_S = 2.0
 HEARTBEAT_EVERY_S = 10.0  # trang đang mở thì báo server máy này còn chạy
@@ -383,7 +377,7 @@ class ClientWebApp:
         bandwidth = _positive(options.get("bandwidth"), "Băng thông")
         deadline = _positive(options.get("deadline"), "Hạn tải") or 60.0
         preferred = (options.get("preferred") or "").strip() or None
-        if preferred and not _VARIANT_ID.match(preferred):
+        if preferred and not VARIANT_ID_PATTERN.match(preferred):
             raise WebError(400, "BAD_REQUEST", f"Variant '{preferred}' không hợp lệ.")
         with self._lock:
             if self._current is not None and self._current.status == "running":
@@ -459,7 +453,7 @@ class ClientWebApp:
         try:
             if not variant_id:
                 raise FeedbackInputError("Chưa có lần nhận diện nào để đánh giá.")
-            if not _VARIANT_ID.match(str(variant_id)):
+            if not VARIANT_ID_PATTERN.match(str(variant_id)):
                 raise FeedbackInputError(f"Variant '{variant_id}' không hợp lệ.")
             rating = parse_rating(str(data.get("rating", "")))
             if not isinstance(data.get("correct"), bool):
@@ -695,13 +689,14 @@ def parse_args(argv: list[str] | None = None) -> tuple[WebConfig, argparse.Names
         parser.error("--peer-port phải là 0 hoặc trong khoảng 1024-65535")
     if args.runs < 1:
         parser.error("--runs phải >= 1")
-    device_id = sanitize_device_id(args.device_id) if args.device_id else default_device_id()
-    if args.device_id and device_id != args.device_id:
-        parser.error("--device-id chỉ gồm A-Z a-z 0-9 _ -, tối đa 32 ký tự")
+    try:
+        device_id = device_id_from_arg(args.device_id)
+    except ValueError as exc:
+        parser.error(str(exc))
     config = WebConfig(
         server=args.server,
         device_id=device_id,
-        cache_dir=args.cache_dir or (REPO_ROOT / "data" / "client" / device_id),
+        cache_dir=args.cache_dir or default_cache_dir(device_id),
         peer_port=args.peer_port,
         labels=args.labels,
         runs=args.runs,

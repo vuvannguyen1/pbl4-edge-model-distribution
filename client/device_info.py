@@ -1,4 +1,5 @@
-"""Thu thập thông tin thiết bị: platform, cpu_arch, ram_mb, runtime, free_storage_mb.
+"""Thu thập thông tin thiết bị: platform, cpu_arch, ram_mb, runtime, free_storage_mb, và RAM
+đỉnh của tiến trình (`peak_ram_mb`).
 
 Chỉ dùng thư viện chuẩn: RAM đọc bằng ctypes (Windows) hoặc /proc/meminfo (Linux).
 """
@@ -14,8 +15,10 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-BYTES_PER_MB = 1024 * 1024
+from client.paths import BYTES_PER_MB
+
 _DEVICE_ID_BAD_CHARS = re.compile(r"[^A-Za-z0-9_-]")
+DEVICE_ID_RULE = "--device-id chỉ gồm A-Z a-z 0-9 _ -, tối đa 32 ký tự"
 
 
 @dataclass(frozen=True)
@@ -40,6 +43,19 @@ def sanitize_device_id(name: str) -> str:
 
 def default_device_id() -> str:
     return sanitize_device_id(socket.gethostname())
+
+
+def device_id_from_arg(raw: str | None) -> str:
+    """device_id từ tham số `--device-id`; bỏ trống thì lấy tên máy.
+
+    Ném ValueError(DEVICE_ID_RULE) nếu giá trị có ký tự ngoài quy ước hoặc quá 32 ký tự.
+    """
+    if not raw:
+        return default_device_id()
+    device_id = sanitize_device_id(raw)
+    if device_id != raw:
+        raise ValueError(DEVICE_ID_RULE)
+    return device_id
 
 
 class _MemoryStatusEx(ctypes.Structure):
@@ -72,6 +88,46 @@ def total_ram_mb() -> int:
     except (OSError, ValueError, AttributeError):
         pass
     return 1
+
+
+class _ProcessMemoryCounters(ctypes.Structure):
+    _fields_ = [
+        ("cb", ctypes.c_ulong),
+        ("PageFaultCount", ctypes.c_ulong),
+        ("PeakWorkingSetSize", ctypes.c_size_t),
+        ("WorkingSetSize", ctypes.c_size_t),
+        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+        ("PagefileUsage", ctypes.c_size_t),
+        ("PeakPagefileUsage", ctypes.c_size_t),
+    ]
+
+
+def peak_ram_mb() -> float | None:
+    """RAM đỉnh của tiến trình (MB). None nếu không đo được."""
+    try:
+        if sys.platform.startswith("win"):
+            counters = _ProcessMemoryCounters()
+            counters.cb = ctypes.sizeof(_ProcessMemoryCounters)
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            psapi = ctypes.windll.psapi  # type: ignore[attr-defined]
+            kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+            process = kernel32.GetCurrentProcess()
+            psapi.GetProcessMemoryInfo.argtypes = [
+                ctypes.c_void_p,
+                ctypes.POINTER(_ProcessMemoryCounters),
+                ctypes.c_ulong,
+            ]
+            if psapi.GetProcessMemoryInfo(process, ctypes.byref(counters), counters.cb):
+                return round(counters.PeakWorkingSetSize / 1024 / 1024, 1)
+            return None
+        import resource
+
+        return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1)  # KiB -> MB
+    except (OSError, AttributeError, ImportError, ValueError):
+        return None
 
 
 def runtime_string() -> str:

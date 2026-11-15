@@ -24,15 +24,13 @@ Mã thoát: 0 đã gửi, đã lưu chờ gửi bù hoặc người dùng thoát
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from client.agent import REPO_ROOT
 from client.api import ApiClient, build_manual_feedback
-from client.device_info import default_device_id, sanitize_device_id
+from client.device_info import DEVICE_ID_RULE, device_id_from_arg, sanitize_device_id
 from client.feedback import (
     QUEUE_FILE,
     FeedbackQueue,
@@ -41,59 +39,27 @@ from client.feedback import (
     new_feedback_id,
     utc_now,
 )
+from client.feedback_input import (  # noqa: F401 - giữ đường import cũ
+    MAX_COMMENT,
+    MAX_LABEL,
+    VARIANT_ID_PATTERN,
+    FeedbackInputError,
+    check_text,
+    parse_rating,
+    parse_yes_no,
+)
 from client.monitor import server_reachable
-
-CLIENT_DATA = REPO_ROOT / "data" / "client"
-EXIT_OK = 0
-EXIT_ERROR = 1
-MAX_LABEL = 200
-MAX_COMMENT = 1000
-_VARIANT_ID = re.compile(r"^[a-z0-9_]{1,64}$")
-_YES = {"y", "yes", "c", "co", "có", "d", "dung", "đúng", "1", "true"}
-_NO = {"n", "no", "k", "khong", "không", "s", "sai", "0", "false"}
+from client.paths import CLIENT_DATA, EXIT_ERROR, EXIT_OK
 
 Printer = Callable[[str], None]
 Asker = Callable[[str], str]
-
-
-class FeedbackInputError(Exception):
-    """Thiếu thông tin hoặc giá trị nhập không hợp lệ."""
 
 
 class FeedbackCancelled(Exception):
     """Người dùng nhấn Enter bỏ trống ở câu hỏi điểm hoặc đúng/sai: thoát, không lưu."""
 
 
-# ---------------------------------------------------------------- kiểm giá trị
-
-
-def parse_rating(text: str) -> int:
-    try:
-        value = int(text.strip())
-    except ValueError:
-        raise FeedbackInputError("Điểm phải là số nguyên từ 1 đến 5.") from None
-    if not 1 <= value <= 5:
-        raise FeedbackInputError("Điểm phải từ 1 đến 5.")
-    return value
-
-
-def parse_yes_no(text: str) -> bool:
-    value = text.strip().lower()
-    if value in _YES:
-        return True
-    if value in _NO:
-        return False
-    raise FeedbackInputError("Trả lời y (có) hoặc n (không).")
-
-
-def check_text(limit: int) -> Callable[[str], str | None]:
-    def parse(text: str) -> str | None:
-        value = text.strip()
-        if len(value) > limit:
-            raise FeedbackInputError(f"Tối đa {limit} ký tự (đang có {len(value)}).")
-        return value or None
-
-    return parse
+# ---------------------------------------------------------------- hỏi người dùng
 
 
 def ask_until_valid(
@@ -199,7 +165,7 @@ def collect_feedback(
             f"Chưa biết model cần đánh giá: chưa có lần detect nào trong {cache_dir}. "
             "Dùng --variant-id."
         )
-    if not _VARIANT_ID.match(variant_id):
+    if not VARIANT_ID_PATTERN.match(variant_id):
         raise FeedbackInputError(f"--variant-id '{variant_id}' không hợp lệ (a-z 0-9 _).")
     detection = last if last and last["variant_id"] == variant_id else None
     prediction = args.prediction or (detection.get("prediction") if detection else None)
@@ -326,14 +292,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def resolve_device(args: argparse.Namespace) -> tuple[str, Path]:
-    if args.device_id:
-        device_id = sanitize_device_id(args.device_id)
-        if device_id != args.device_id:
-            raise FeedbackInputError("--device-id chỉ gồm A-Z a-z 0-9 _ -, tối đa 32 ký tự")
-    elif args.cache_dir is not None:
+    if not args.device_id and args.cache_dir is not None:
         device_id = sanitize_device_id(args.cache_dir.resolve().name)
     else:
-        device_id = default_device_id()
+        try:
+            device_id = device_id_from_arg(args.device_id)
+        except ValueError:
+            raise FeedbackInputError(DEVICE_ID_RULE) from None
     return device_id, args.cache_dir or (CLIENT_DATA / device_id)
 
 

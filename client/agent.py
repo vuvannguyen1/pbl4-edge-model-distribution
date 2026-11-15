@@ -30,12 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from client.api import ApiClient, ApiError, build_feedback, build_model_request, build_register
-from client.device_info import (
-    DeviceInfo,
-    collect_device_info,
-    default_device_id,
-    sanitize_device_id,
-)
+from client.device_info import DeviceInfo, collect_device_info, device_id_from_arg
 from client.downloader import ChunkDownloader, DownloadError, DownloadResult, SwitchRequested
 from client.feedback import FeedbackQueue, save_last_detection
 from client.inference import InferenceResult, create_runner, format_result, is_detection
@@ -46,16 +41,19 @@ from client.model_cache import (  # noqa: F401 - verified_variants giữ đườ
     verified_variants,
 )
 from client.monitor import ServerMonitor, server_reachable
+from client.paths import (  # noqa: F401 - REPO_ROOT giữ đường import cũ
+    BYTES_PER_MB,
+    DEFAULT_LABELS,
+    EXIT_ERROR,
+    EXIT_OK,
+    REPO_ROOT,
+    default_cache_dir,
+)
 from client.peer import PeerService, port_available
 from client.picker import pick_images
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_LABELS = REPO_ROOT / "samples" / "imagenet_synset.txt"
-EXIT_OK = 0
-EXIT_ERROR = 1
 EXIT_NO_VARIANT = 2
 MAX_SWITCHES = 1
-BYTES_PER_MB = 1024 * 1024
 
 Printer = Callable[[str], None]
 
@@ -88,7 +86,7 @@ class AgentConfig:
     mode: str | None = "photo"
 
     def resolved_cache_dir(self) -> Path:
-        return self.cache_dir or (REPO_ROOT / "data" / "client" / self.device_id)
+        return self.cache_dir or default_cache_dir(self.device_id)
 
 
 @dataclass
@@ -676,9 +674,10 @@ def parse_args(argv: Sequence[str] | None = None) -> AgentConfig:
         parser.error("--deadline phải > 0")
     if args.bandwidth is not None and args.bandwidth <= 0:
         parser.error("--bandwidth phải > 0")
-    device_id = sanitize_device_id(args.device_id) if args.device_id else default_device_id()
-    if args.device_id and device_id != args.device_id:
-        parser.error("--device-id chỉ gồm A-Z a-z 0-9 _ -, tối đa 32 ký tự")
+    try:
+        device_id = device_id_from_arg(args.device_id)
+    except ValueError as exc:
+        parser.error(str(exc))
     return AgentConfig(
         server=args.server,
         device_id=device_id,

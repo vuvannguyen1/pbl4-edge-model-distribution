@@ -42,13 +42,13 @@ from client.model_cache import (  # noqa: F401 - giữ đường import cũ
     variant_paths,
     verified_variants,
 )
+from client.paths import BYTES_PER_MB
 
 MAX_PARALLEL = 4
 CHUNK_TIMEOUT_S = 10.0
 MAX_ATTEMPTS = 3
 REPORT_EVERY = 4
 READ_BLOCK = 64 * 1024
-BYTES_PER_MB = 1024 * 1024
 
 Logger = Callable[[str], None]
 

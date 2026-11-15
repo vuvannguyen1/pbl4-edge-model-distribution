@@ -12,9 +12,7 @@ mean/std -> NCHW float32 có chiều batch. Với ảnh 224x224, cạnh ngắn r
 
 from __future__ import annotations
 
-import ctypes
 import statistics
-import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,6 +20,9 @@ from typing import Any
 
 import numpy as np
 from PIL import Image
+
+from client.detection import Detector, detection_spec, format_detections
+from client.device_info import peak_ram_mb
 
 WARMUP_RUNS = 3
 RESIZE_RATIO = 256 / 224  # resize cạnh ngắn 256 rồi cắt 224, theo Model Card
@@ -100,46 +101,6 @@ def top_k(probabilities: np.ndarray, labels: list[str], k: int = 5) -> list[Pred
     ]
 
 
-class _ProcessMemoryCounters(ctypes.Structure):
-    _fields_ = [
-        ("cb", ctypes.c_ulong),
-        ("PageFaultCount", ctypes.c_ulong),
-        ("PeakWorkingSetSize", ctypes.c_size_t),
-        ("WorkingSetSize", ctypes.c_size_t),
-        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
-        ("QuotaPagedPoolUsage", ctypes.c_size_t),
-        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-        ("PagefileUsage", ctypes.c_size_t),
-        ("PeakPagefileUsage", ctypes.c_size_t),
-    ]
-
-
-def peak_ram_mb() -> float | None:
-    """RAM đỉnh của tiến trình (MB). None nếu không đo được."""
-    try:
-        if sys.platform.startswith("win"):
-            counters = _ProcessMemoryCounters()
-            counters.cb = ctypes.sizeof(_ProcessMemoryCounters)
-            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-            psapi = ctypes.windll.psapi  # type: ignore[attr-defined]
-            kernel32.GetCurrentProcess.restype = ctypes.c_void_p
-            process = kernel32.GetCurrentProcess()
-            psapi.GetProcessMemoryInfo.argtypes = [
-                ctypes.c_void_p,
-                ctypes.POINTER(_ProcessMemoryCounters),
-                ctypes.c_ulong,
-            ]
-            if psapi.GetProcessMemoryInfo(process, ctypes.byref(counters), counters.cb):
-                return round(counters.PeakWorkingSetSize / 1024 / 1024, 1)
-            return None
-        import resource
-
-        return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1)  # KiB -> MB
-    except (OSError, AttributeError, ImportError, ValueError):
-        return None
-
-
 class Classifier:
     """Nạp model ONNX một lần rồi phân loại nhiều ảnh (warm-up chỉ ở ảnh đầu tiên)."""
 
@@ -184,8 +145,6 @@ class DetectionRunner:
     """Model phát hiện vật thể với cùng giao diện `Classifier` (load_ms, classify)."""
 
     def __init__(self, model_path: Path, variant: dict[str, Any]) -> None:
-        from client.detection import Detector
-
         self.detector = Detector(model_path, variant)
         self.load_ms = self.detector.load_ms
         self.variant = variant
@@ -208,8 +167,6 @@ class DetectionRunner:
 
 
 def is_detection(variant: dict[str, Any]) -> bool:
-    from client.detection import detection_spec
-
     return detection_spec(variant) is not None
 
 
@@ -229,8 +186,6 @@ def create_runner(
 def format_result(result: InferenceResult, variant: dict[str, Any]) -> list[str]:
     """Bảng vật thể (phát hiện vật thể) hoặc Top-5 (phân loại) để in ra console."""
     if is_detection(variant):
-        from client.detection import format_detections
-
         return format_detections(result.detections)
     return format_top5(result.top5)
 
