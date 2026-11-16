@@ -12,7 +12,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from selector.feedback_classifier import classify_user_feedback
+from server.budget import (  # noqa: F401 - giữ đường import cũ
+    DEFAULT_LIVE_FPS,
+    DEFAULT_MS_PER_GFLOP,
+    MAX_THREAD_SPEEDUP,
+    PHOTO_BUDGET_MS,
+    SLO_OVER_BUDGET,
+    budget_for,
+)
+from server.budget import device_speed as _device_speed
 from server.config import Settings
+from server.db import recorder
 from server.devices import Device, DeviceStore, clean_name
 from server.errors import ProtocolError, bad_request, unknown_device, unknown_variant
 from server.feedback import (
@@ -23,6 +33,7 @@ from server.feedback import (
     evaluate_manual,
     final_score,
 )
+from server.peers import find_peers
 from server.planner import PeerSource, build_plan, format_ranges, summarize_plan
 from server.registry import Registry, RegistryVariant
 from server.schemas import (
@@ -55,29 +66,7 @@ from server.textfmt import estimate_download_s, fmt_num
 
 logger = logging.getLogger("pbl4.server")
 
-# ---- Ngân sách suy luận theo chế độ dùng (phát hiện vật thể)
-DEFAULT_LIVE_FPS = 5.0  # camera trực tiếp: tối thiểu 5 khung/giây -> 200 ms/khung
-PHOTO_BUDGET_MS = 2500.0  # ảnh chụp: chờ tối đa 2,5 s
-# Ngưỡng feedback đề xuất đổi model: vượt ngân sách quá 50 %
-SLO_OVER_BUDGET = 1.5
-# Tốc độ ước lượng (ms cho mỗi GFLOP) khi lớp thiết bị chưa có số đo thật.
-# Đo trên Chrome (onnxruntime-web WASM 1 luồng) và onnxruntime CPU của laptop thử nghiệm.
-DEFAULT_MS_PER_GFLOP = {
-    ("onnxruntime-web", True): 140.0,  # trình duyệt điện thoại
-    ("onnxruntime-web", False): 70.0,  # trình duyệt laptop/PC
-    ("onnxruntime", True): 40.0,  # client Python trên Android (Termux)
-    ("onnxruntime", False): 12.0,  # client Python trên laptop/PC
-}
-MAX_THREAD_SPEEDUP = 4  # WASM đa luồng: mỗi luồng thêm nhanh ~50 %, tính tối đa 4 luồng
 NAME_ACTIVE_S = 30  # máy liên lạc trong ngần này giây thì giữ tên, máy khác không dùng trùng
-
-
-def budget_for(mode: str | None, target_fps: float | None) -> float | None:
-    if mode == "live":
-        return 1000.0 / (target_fps or DEFAULT_LIVE_FPS)
-    if mode == "photo":
-        return PHOTO_BUDGET_MS
-    return None
 
 
 @dataclass(frozen=True)
@@ -165,23 +154,17 @@ class DistributionService:
             device.runtime,
             f", {device.threads} luồng, P2P {device.p2p_transport}" if device.capabilities else "",
         )
-        try:
-            from server.db import get_session_factory, record_device as db_record_device
-            with get_session_factory()() as db_session:
-                db_record_device(
-                    session=db_session,
-                    device_id=device.device_id,
-                    device_class=device.device_class,
-                    platform=device.platform,
-                    cpu_arch=device.cpu_arch,
-                    ram_mb=device.ram_mb,
-                    runtime=device.runtime,
-                    peer_port=device.peer_port,
-                    peer_enabled=self.settings.peer_enabled,
-                    last_ip=device.ip,
-                )
-        except Exception as exc:
-            logger.debug("Không thể ghi device vào CSDL: %s", exc)
+        recorder.record_device(
+            device_id=device.device_id,
+            device_class=device.device_class,
+            platform=device.platform,
+            cpu_arch=device.cpu_arch,
+            ram_mb=device.ram_mb,
+            runtime=device.runtime,
+            peer_port=device.peer_port,
+            peer_enabled=self.settings.peer_enabled,
+            last_ip=device.ip,
+        )
         return RegisterResponse(
             device_id=device.device_id,
             device_class=device.device_class,
@@ -326,23 +309,17 @@ class DistributionService:
             estimate,
             "rỗng, thiết bị đã có đủ" if already_have else summarize_plan(plan),
         )
-        try:
-            from server.db import get_session_factory, record_distribution_request as db_record_req
-            with get_session_factory()() as db_session:
-                db_record_req(
-                    session=db_session,
-                    request_id=rid,
-                    device_id=device.device_id,
-                    task_id=req.task,
-                    variant_id=variant.variant_id,
-                    selector_version=selector_version,
-                    bandwidth_kbps=bandwidth,
-                    deadline_s=req.deadline_s,
-                    free_storage_mb=req.free_storage_mb,
-                    reason=reason,
-                )
-        except Exception as exc:
-            logger.debug("[%s] Không thể ghi request vào CSDL: %s", rid, exc)
+        recorder.record_request(
+            rid,
+            device_id=device.device_id,
+            task_id=req.task,
+            variant_id=variant.variant_id,
+            selector_version=selector_version,
+            bandwidth_kbps=bandwidth,
+            deadline_s=req.deadline_s,
+            free_storage_mb=req.free_storage_mb,
+            reason=reason,
+        )
         return ModelResponse(
             request_id=rid,
             variant=variant.protocol_variant,
@@ -404,46 +381,18 @@ class DistributionService:
 
     def device_speed(self, device: Device) -> tuple[float, str]:
         """ms/GFLOP của thiết bị: số đo thật của lớp nếu có, ngược lại ước lượng theo runtime."""
-        measured = self.state.class_speed(device.device_class)
-        if measured is not None:
-            return measured, "đo thực tế"
-        base = DEFAULT_MS_PER_GFLOP[(device.runtime_family, device.is_mobile)]
-        threads = min(device.threads, MAX_THREAD_SPEEDUP)
-        return base / (1 + 0.5 * (threads - 1)), "ước lượng"
+        return _device_speed(device, self.state)
 
     def _find_peers(self, requester: Device, variant_id: str) -> list[PeerSource]:
-        """Peer hợp lệ: khác thiết bị, đã complete variant, chưa bị báo sai, và cùng cách P2P.
-
-        Không xét lớp thiết bị: cùng variant là cùng một file, mỗi miếng đều được kiểm SHA-256,
-        nên hai máy khác cấu hình vẫn chia sẻ được. Lớp thiết bị chỉ dùng để chọn model.
-
-        - Client Python (peer_port): peer HTTP `http://<ip>:<peer_port>`.
-        - Trình duyệt (capabilities.p2p = webrtc): peer `webrtc://<device_id>` đang mở trang
-          (long-poll /api/signal trong vòng 12 s). Trình duyệt không gọi được peer HTTP và
-          client Python không nói WebRTC, nên hai loại không bao giờ ghép với nhau.
-        """
-        if not self.settings.peer_enabled:
-            return []
-        wants_webrtc = requester.p2p_transport == "webrtc"
-        peers: list[PeerSource] = []
-        for device_id in self.state.devices_with_complete(variant_id):
-            if device_id == requester.device_id:
-                continue
-            device = self.devices.get(device_id)
-            if device is None:
-                continue
-            if wants_webrtc:
-                origin = device.webrtc_origin
-                if origin is None or not self.signals.is_online(device_id):
-                    continue
-            else:
-                origin = device.peer_origin
-                if origin is None or origin == requester.peer_origin:
-                    continue
-            if self.state.is_banned(origin):
-                continue
-            peers.append(PeerSource(device_id=device_id, origin=origin, name=device.name))
-        return peers
+        """Peer hợp lệ cho `requester` (xem `server.peers.find_peers`)."""
+        return find_peers(
+            requester,
+            variant_id,
+            settings=self.settings,
+            state=self.state,
+            devices=self.devices,
+            signals=self.signals,
+        )
 
     # ------------------------------------------------------------ khai báo model có sẵn
 
@@ -656,27 +605,21 @@ class DistributionService:
             decision.new_variant_id or "",
             path.name,
         )
-        try:
-            from server.db import get_session_factory, record_performance_feedback as db_record_perf
-            with get_session_factory()() as db_session:
-                db_record_perf(
-                    session=db_session,
-                    request_id=rid,
-                    device_id=req.device_id,
-                    variant_id=req.variant_id,
-                    device_class=device.device_class,
-                    download_ms=req.download_ms,
-                    load_ms=req.load_ms,
-                    latency_ms_median=req.latency_ms_median,
-                    runs=req.runs,
-                    peak_ram_mb=req.peak_ram_mb,
-                    chunks_from_server=req.chunks_from_server,
-                    chunks_from_peer=req.chunks_from_peer,
-                    action=decision.action,
-                    reason=decision.reason,
-                )
-        except Exception as exc:
-            logger.warning("[%s] Không thể lưu feedback vào CSDL: %s", rid, exc)
+        recorder.record_performance(
+            rid,
+            device_id=req.device_id,
+            variant_id=req.variant_id,
+            device_class=device.device_class,
+            download_ms=req.download_ms,
+            load_ms=req.load_ms,
+            latency_ms_median=req.latency_ms_median,
+            runs=req.runs,
+            peak_ram_mb=req.peak_ram_mb,
+            chunks_from_server=req.chunks_from_server,
+            chunks_from_peer=req.chunks_from_peer,
+            action=decision.action,
+            reason=decision.reason,
+        )
         return FeedbackResponse(
             action=decision.action,
             new_variant_id=decision.new_variant_id,
@@ -751,26 +694,20 @@ class DistributionService:
             )
             if comment:
                 self._record_comment(req, comment)
-        try:
-            from server.db import get_session_factory, record_user_feedback as db_record_user
-            with get_session_factory()() as db_session:
-                db_record_user(
-                    session=db_session,
-                    device_id=req.device_id,
-                    variant_id=req.variant_id,
-                    feedback_text=req.comment or "",
-                    sentiment_score=evaluation.comment_score or req.rating,
-                    final_score=evaluation.final_score,
-                    sentiment_label=evaluation.verdict,
-                    flag_for_retrain=(evaluation.verdict == "negative" or evaluation.needs_review),
-                    feedback_id=req.feedback_id,
-                    request_id=req.request_id,
-                    rating=req.rating,
-                    is_correct=req.correct,
-                    actual_label=req.expected_label,
-                )
-        except Exception as exc:
-            logger.warning("[%s] Không thể lưu manual feedback vào CSDL: %s", req.feedback_id, exc)
+        recorder.record_manual(
+            req.feedback_id,
+            device_id=req.device_id,
+            variant_id=req.variant_id,
+            feedback_text=req.comment or "",
+            sentiment_score=evaluation.comment_score or req.rating,
+            final_score=evaluation.final_score,
+            sentiment_label=evaluation.verdict,
+            flag_for_retrain=(evaluation.verdict == "negative" or evaluation.needs_review),
+            request_id=req.request_id,
+            rating=req.rating,
+            is_correct=req.correct,
+            actual_label=req.expected_label,
+        )
         return ManualFeedbackResponse(
             feedback_id=req.feedback_id,
             status="duplicate" if duplicate else "accepted",
