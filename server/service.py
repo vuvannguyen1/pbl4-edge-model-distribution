@@ -1,6 +1,6 @@
 """Dịch vụ phân phối: điều phối Registry, Selector, Planner, trạng thái và feedback.
 
-Handler HTTP trong `server/main.py` chỉ đọc/ghi HTTP rồi gọi các hàm ở đây.
+Handler HTTP trong `server/routes/protocol.py` chỉ đọc/ghi HTTP rồi gọi các hàm ở đây.
 Mọi dòng log của một lượt xin model đều bắt đầu bằng `[request_id]`.
 """
 

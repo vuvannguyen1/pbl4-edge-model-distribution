@@ -414,8 +414,8 @@ Client sẽ tự đăng ký thông số thiết bị qua `/api/register`, xin mo
 
 | Thư mục | Nội dung |
 |---|---|
-| `server/` | FastAPI app, Registry, Selector, Planner, token bucket, feedback; `admin_api.py` + `static/` là dashboard `/ui`; `webclient/` là giao diện client `/app`; `signaling.py` signaling WebRTC; `serve.py` lệnh bật server + HTTPS + in link |
-| `client/` | Agent CLI, detect offline, chọn ảnh, theo dõi server, downloader, inference (`detection.py`: giải mã 4 định dạng model phát hiện vật thể), peer HTTP; `web_ui.py` + `web/` là giao diện web cho client Python |
+| `server/` | FastAPI app: `main.py` lắp ráp app, `routes/` route Protocol 1.0 và trang web, `service.py` điều phối Registry, Selector, Planner, token bucket; `feedback/` ba luồng feedback; `admin_api.py` + `admin/` + `static/` là dashboard `/ui`; `webclient/` là giao diện client `/app`; `signaling.py` signaling WebRTC; `db/` CSDL; `serve.py` lệnh bật server + HTTPS + in link |
+| `client/` | Agent CLI (`agent.py`, `agent_cli.py`, `agent_types.py`), detect offline, chọn ảnh, theo dõi server, downloader, inference (`detection.py`: giải mã 4 định dạng model phát hiện vật thể), peer HTTP; `web_ui.py` + `webui_*.py` + `web/` là giao diện web cho client Python; `paths.py` đường dẫn dùng chung. Chạy độc lập, không import `server/` |
 | `metadata/` | `model_cards/`: Model Card của 10 model CV (sinh bằng `tools/curate_detection_registry.py`); `model_sources.json`: nguồn tải và SHA-256 của 10 model |
 | `client/web/shared/` | CSS, font, icon, JS dùng chung cho cả hai giao diện web (xem `docs/design-system.md`) |
 | `registry/`, `models/` | Registry sinh tự động, file `.onnx` (không commit) |

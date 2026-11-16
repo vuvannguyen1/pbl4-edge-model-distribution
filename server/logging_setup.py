@@ -1,6 +1,6 @@
 """Ghi log của server ra console và file theo ngày (`<logs_dir>/server-YYYYMMDD.log`).
 
-Định dạng dòng `HH:MM:SS LEVEL nội dung` được dashboard đọc lại (`server/admin_api.py`,
+Định dạng dòng `HH:MM:SS LEVEL nội dung` được dashboard đọc lại (`server/admin/logs.py`,
 `parse_log_lines`), nên không đổi định dạng này.
 """
 

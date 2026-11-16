@@ -7,7 +7,7 @@ cho trang `/ui`. Không chọn model, không lập plan.
 Phần ghi (chỉ hai thao tác quản trị): upload model mới (`ingest_model`) và đổi trạng thái
 variant. Cả hai ghi Registry JSON và CSDL dưới cùng một khóa rồi nạp lại Registry trong
 RAM, nên `/api/request` kế tiếp thấy ngay thay đổi. Thao tác khác của dashboard (xin model
-thử, gửi đánh giá) gọi thẳng các endpoint Protocol 1.0 trong `server/main.py`.
+thử, gửi đánh giá) gọi thẳng các endpoint Protocol 1.0 trong `server/routes/protocol.py`.
 """
 
 from __future__ import annotations
