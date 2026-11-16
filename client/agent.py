@@ -21,16 +21,16 @@ Mã thoát: 0 thành công, 2 server báo NO_VARIANT_FITS, 1 lỗi khác.
 
 from __future__ import annotations
 
-import argparse
 import sys
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from client.agent_cli import parse_args  # noqa: F401 - giữ đường import cũ
+from client.agent_types import EXIT_NO_VARIANT, AgentConfig, AgentError, AgentResult
 from client.api import ApiClient, ApiError, build_feedback, build_model_request, build_register
-from client.device_info import DeviceInfo, collect_device_info, device_id_from_arg
+from client.device_info import DeviceInfo, collect_device_info
 from client.downloader import ChunkDownloader, DownloadError, DownloadResult, SwitchRequested
 from client.feedback import FeedbackQueue, save_last_detection
 from client.inference import InferenceResult, create_runner, format_result, is_detection
@@ -41,68 +41,19 @@ from client.model_cache import (  # noqa: F401 - verified_variants giữ đườ
     verified_variants,
 )
 from client.monitor import ServerMonitor, server_reachable
-from client.paths import (  # noqa: F401 - REPO_ROOT giữ đường import cũ
+from client.paths import (  # noqa: F401 - REPO_ROOT, DEFAULT_LABELS giữ đường import cũ
     BYTES_PER_MB,
     DEFAULT_LABELS,
     EXIT_ERROR,
     EXIT_OK,
     REPO_ROOT,
-    default_cache_dir,
 )
 from client.peer import PeerService, port_available
 from client.picker import pick_images
 
-EXIT_NO_VARIANT = 2
 MAX_SWITCHES = 1
 
 Printer = Callable[[str], None]
-
-
-class AgentError(Exception):
-    def __init__(self, message: str, exit_code: int = EXIT_ERROR) -> None:
-        super().__init__(message)
-        self.exit_code = exit_code
-
-
-@dataclass
-class AgentConfig:
-    server: str
-    device_id: str
-    image: Path | None  # None: main() mở hộp thoại chọn ảnh trước khi chạy
-    deadline_s: float = 60.0
-    bandwidth_kbps: float | None = None
-    preferred_variant: str | None = None
-    peer_port: int = 9000
-    cache_dir: Path | None = None
-    runs: int = 20
-    platform: str | None = None
-    follow_switch: bool = False
-    serve: bool = False
-    labels: Path = DEFAULT_LABELS
-    probe_kb: int = 256
-    refresh: bool = False  # True: hỏi server dù kho đã có model hợp lệ
-    # photo: server chọn model chạy một ảnh trong ~2,5 s trên máy này; live: ~5 khung/giây;
-    # None: không lọc theo tốc độ (như protocol 1.0)
-    mode: str | None = "photo"
-
-    def resolved_cache_dir(self) -> Path:
-        return self.cache_dir or default_cache_dir(self.device_id)
-
-
-@dataclass
-class AgentResult:
-    device_class: str
-    request_id: str
-    variant: dict[str, Any]
-    model_path: Path
-    download_ms: float
-    download: DownloadResult | None
-    inference: InferenceResult
-    feedback_payload: dict[str, Any]
-    feedback: dict[str, Any]
-    history: list[str] = field(default_factory=list)  # các variant đã xin, theo thứ tự
-    offline: bool = False  # True: không kết nối được server, dùng model trong cache
-    source: str = "server"  # "server": vừa xin model; "cache": dùng model có sẵn, không xin
 
 
 # ---------------------------------------------------------------- agent
@@ -621,80 +572,6 @@ class Agent:
 
 
 # ---------------------------------------------------------------- CLI
-
-
-def parse_args(argv: Sequence[str] | None = None) -> AgentConfig:
-    parser = argparse.ArgumentParser(
-        prog="python -m client.agent",
-        description="Client agent PBL4: xin model theo băng thông, tải, kiểm hash, chạy ONNX.",
-    )
-    parser.add_argument("--server", default="http://localhost:8000", help="URL server")
-    parser.add_argument("--device-id", default=None, help="mặc định: tên máy đã lọc ký tự")
-    parser.add_argument(
-        "--image", type=Path, default=None, help="ảnh để chạy thử; bỏ trống thì mở hộp thoại chọn"
-    )
-    parser.add_argument("--deadline", type=float, default=60.0, help="hạn tải (giây)")
-    parser.add_argument(
-        "--bandwidth", type=float, default=None, help="kbps; bỏ trống thì đo bằng /api/probe"
-    )
-    parser.add_argument("--preferred-variant", default=None)
-    parser.add_argument("--peer-port", type=int, default=9000, help="0 = không chia sẻ")
-    parser.add_argument("--cache-dir", type=Path, default=None, help="mặc định data/client/<id>")
-    parser.add_argument("--runs", type=int, default=20, help="số lần chạy để lấy trung vị")
-    parser.add_argument(
-        "--platform",
-        default=None,
-        choices=["android", "android_browser", "ios_browser", "windows", "linux"],
-    )
-    parser.add_argument(
-        "--mode",
-        default="photo",
-        choices=["photo", "live", "none"],
-        help="photo: model chạy một ảnh trong ~2,5 s; live: ~5 khung/giây; none: không lọc tốc độ",
-    )
-    parser.add_argument(
-        "--follow-switch", action="store_true", help="tự xin lại khi feedback trả switch (1 lần)"
-    )
-    parser.add_argument(
-        "--serve", action="store_true", help="giữ peer service chạy đến khi bấm Ctrl+C"
-    )
-    parser.add_argument("--labels", type=Path, default=DEFAULT_LABELS, help="file synset")
-    parser.add_argument(
-        "--refresh",
-        action="store_true",
-        help="hỏi server dù máy đã có model hợp lệ (mặc định dùng model có sẵn)",
-    )
-    args = parser.parse_args(argv)
-
-    if args.peer_port and not 1024 <= args.peer_port <= 65535:
-        parser.error("--peer-port phải là 0 hoặc trong khoảng 1024-65535")
-    if args.runs < 1:
-        parser.error("--runs phải >= 1")
-    if args.deadline <= 0:
-        parser.error("--deadline phải > 0")
-    if args.bandwidth is not None and args.bandwidth <= 0:
-        parser.error("--bandwidth phải > 0")
-    try:
-        device_id = device_id_from_arg(args.device_id)
-    except ValueError as exc:
-        parser.error(str(exc))
-    return AgentConfig(
-        server=args.server,
-        device_id=device_id,
-        image=args.image,
-        deadline_s=args.deadline,
-        bandwidth_kbps=args.bandwidth,
-        preferred_variant=args.preferred_variant,
-        peer_port=args.peer_port,
-        cache_dir=args.cache_dir,
-        runs=args.runs,
-        platform=args.platform,
-        follow_switch=args.follow_switch,
-        serve=args.serve,
-        labels=args.labels,
-        refresh=args.refresh,
-        mode=None if args.mode == "none" else args.mode,
-    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
